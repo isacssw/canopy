@@ -19,15 +19,14 @@ import (
 // ── Colours & styles ────────────────────────────────────────────────────────
 
 var (
-	colorBg      = lipgloss.Color("#0d1117")
-	colorBorder  = lipgloss.Color("#30363d")
-	colorMuted   = lipgloss.Color("#8b949e")
-	colorText    = lipgloss.Color("#e6edf3")
-	colorAccent  = lipgloss.Color("#58a6ff")
-	colorGreen   = lipgloss.Color("#3fb950")
-	colorYellow  = lipgloss.Color("#d29922")
-	colorRed     = lipgloss.Color("#f85149")
-	colorPurple  = lipgloss.Color("#bc8cff")
+	colorBorder = lipgloss.Color("#30363d")
+	colorMuted  = lipgloss.Color("#8b949e")
+	colorText   = lipgloss.Color("#e6edf3")
+	colorAccent = lipgloss.Color("#58a6ff")
+	colorGreen  = lipgloss.Color("#3fb950")
+	colorYellow = lipgloss.Color("#d29922")
+	colorRed    = lipgloss.Color("#f85149")
+	colorPurple = lipgloss.Color("#bc8cff")
 
 	stylePanelBorder = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
@@ -122,15 +121,15 @@ type diffReadyMsg struct{ content string }
 // ── Model ────────────────────────────────────────────────────────────────────
 
 type Model struct {
-	cfg       *config.Config
-	entries   []entry
-	cursor    int
-	mode      mode
-	width     int
-	height    int
+	cfg     *config.Config
+	entries []entry
+	cursor  int
+	mode    mode
+	width   int
+	height  int
 
-	outputVP  viewport.Model
-	diffVP    viewport.Model
+	outputVP viewport.Model
+	diffVP   viewport.Model
 
 	input     textinput.Model
 	inputHint string
@@ -630,15 +629,6 @@ func (m *Model) renderStatusBar() string {
 		bar = bar + "   " + lipgloss.NewStyle().Foreground(colorYellow).Render(m.statusMsg)
 	}
 	return styleStatusBar.Width(m.width).Render(bar)
-}
-
-func (m *Model) renderInputBar() string {
-	hint := styleMuted.Render(m.inputHint)
-	return lipgloss.NewStyle().
-		Background(lipgloss.Color("#161b22")).
-		PaddingLeft(1).
-		Width(m.width).
-		Render(hint + m.input.View())
 }
 
 func (m *Model) renderInputModal(title, hint string) string {
