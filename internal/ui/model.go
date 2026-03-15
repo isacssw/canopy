@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -93,8 +94,10 @@ func statusIcon(s agent.Status) string {
 // ── State entry ─────────────────────────────────────────────────────────────
 
 type entry struct {
-	wt    worktree.Worktree
-	agent *agent.Agent
+	wt         worktree.Worktree
+	agent      *agent.Agent
+	unread     bool
+	prevStatus agent.Status
 }
 
 // ── Modes ───────────────────────────────────────────────────────────────────
@@ -109,6 +112,7 @@ const (
 	modeDiff
 	modeConfirmDelete
 	modeSetupAgent
+	modeHelp
 )
 
 // ── Messages ─────────────────────────────────────────────────────────────────
@@ -188,6 +192,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncOutputViewport()
 
 	case agentChangedMsg:
+		idx := msg.idx
+		if idx >= 0 && idx < len(m.entries) {
+			e := &m.entries[idx]
+			newStatus := e.agent.Status()
+			if e.prevStatus != agent.StatusWaiting && newStatus == agent.StatusWaiting {
+				if idx != m.cursor {
+					e.unread = true
+				}
+				fmt.Fprint(os.Stderr, "\a") // bell — stderr safe; Bubbletea owns stdout
+			}
+			e.prevStatus = newStatus
+		}
 		m.syncOutputViewport()
 
 	case errMsg:
@@ -201,6 +217,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 	}
 
 	// Propagate to active sub-components
@@ -233,13 +252,18 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
+				m.entries[m.cursor].unread = false
 				m.syncOutputViewport()
 			}
 		case "down", "j":
 			if m.cursor < len(m.entries)-1 {
 				m.cursor++
+				m.entries[m.cursor].unread = false
 				m.syncOutputViewport()
 			}
+		case "?":
+			m.mode = modeHelp
+			return m, nil
 		case "n":
 			m.enterInput(modeNewWorktree, "New branch name (e.g. feat/my-feature): ", "")
 			return m, nil
@@ -329,6 +353,12 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = modeNormal
 			m.statusMsg = ""
 		}
+
+	case modeHelp:
+		switch msg.String() {
+		case "esc", "q", "?":
+			m.mode = modeNormal
+		}
 	}
 
 	var cmd tea.Cmd
@@ -347,19 +377,25 @@ func (m *Model) refreshWorktrees() tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
-		// Preserve existing agents by path
-		agentMap := map[string]*agent.Agent{}
+		// Preserve existing agents, unread badges, and prevStatus by path
+		type entryState struct {
+			agent      *agent.Agent
+			unread     bool
+			prevStatus agent.Status
+		}
+		stateMap := map[string]entryState{}
 		for _, e := range m.entries {
-			agentMap[e.wt.Path] = e.agent
+			stateMap[e.wt.Path] = entryState{e.agent, e.unread, e.prevStatus}
 		}
 		entries := make([]entry, 0, len(wts))
 		for _, wt := range wts {
-			a, ok := agentMap[wt.Path]
+			st, ok := stateMap[wt.Path]
 			if !ok {
-				a = agent.New()
+				a := agent.New()
 				a.Reconnect(wt.Path, wt.Branch, m.cfg.RepoRoot)
+				st = entryState{agent: a}
 			}
-			entries = append(entries, entry{wt: wt, agent: a})
+			entries = append(entries, entry{wt: wt, agent: st.agent, unread: st.unread, prevStatus: st.prevStatus})
 		}
 		return worktreesRefreshedMsg{entries: entries}
 	}
@@ -493,11 +529,15 @@ func (m *Model) View() string {
 		return "loading…"
 	}
 
+	if m.mode == modeHelp {
+		return m.renderHelp()
+	}
+
 	if m.mode == modeDiff {
 		return m.renderDiff()
 	}
 
-	leftW := 38
+	leftW := m.leftPanelWidth()
 	rightW := m.width - leftW - 3
 	innerH := m.height - 4 // leave room for status bar + border
 
@@ -540,12 +580,16 @@ func (m *Model) renderWorktreePanel(w, h int) string {
 
 		statusTxt := statusStyle(e.agent.Status()).Render(e.agent.Status().String())
 
-		line1 := fmt.Sprintf(" %s %s", iconS, styleNormal.Render(branch))
+		badge := ""
+		if e.unread {
+			badge = " " + lipgloss.NewStyle().Foreground(colorYellow).Bold(true).Render("●")
+		}
+		line1 := fmt.Sprintf(" %s %s%s", iconS, styleNormal.Render(branch), badge)
 		line2 := base
 		line3 := fmt.Sprintf("   %s", statusTxt)
 
 		if e.wt.IsMain {
-			line1 = fmt.Sprintf(" %s %s %s", iconS, styleNormal.Render(branch), styleMuted.Render("(main)"))
+			line1 = fmt.Sprintf(" %s %s %s%s", iconS, styleNormal.Render(branch), styleMuted.Render("(main)"), badge)
 			line2 = ""
 		}
 
@@ -614,6 +658,7 @@ func (m *Model) renderDiff() string {
 
 func (m *Model) renderStatusBar() string {
 	keys := []string{
+		key("?", "help"),
 		key("n", "new"),
 		key("r", "run"),
 		key("a", "attach"),
@@ -624,10 +669,23 @@ func (m *Model) renderStatusBar() string {
 		key("R", "refresh"),
 		key("q", "quit"),
 	}
-	bar := strings.Join(keys, "  ")
-	if m.statusMsg != "" {
-		bar = bar + "   " + lipgloss.NewStyle().Foreground(colorYellow).Render(m.statusMsg)
+	left := strings.Join(keys, "  ")
+
+	var rightParts []string
+	if counts := m.statusCounts(); counts != "" {
+		rightParts = append(rightParts, counts)
 	}
+	if m.statusMsg != "" {
+		rightParts = append(rightParts, lipgloss.NewStyle().Foreground(colorYellow).Render(m.statusMsg))
+	}
+	right := strings.Join(rightParts, "   ")
+
+	contentWidth := m.width - 2 // PaddingLeft(1) + PaddingRight(1)
+	gap := contentWidth - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 2 {
+		gap = 2
+	}
+	bar := left + strings.Repeat(" ", gap) + right
 	return styleStatusBar.Width(m.width).Render(bar)
 }
 
@@ -678,7 +736,7 @@ func (m *Model) enterInput(md mode, hint, defaultVal string) {
 }
 
 func (m *Model) resizePanels() {
-	rightW := m.width - 38 - 6
+	rightW := m.width - m.leftPanelWidth() - 6
 	innerH := m.height - 6
 	m.outputVP = viewport.New(rightW, innerH)
 	m.syncOutputViewport()
@@ -696,6 +754,139 @@ func (m *Model) syncOutputViewport() {
 	}
 	m.outputVP.SetContent(snap)
 	m.outputVP.GotoBottom()
+}
+
+func (m *Model) leftPanelWidth() int {
+	if m.cfg != nil && m.cfg.LeftPanelWidth >= 20 {
+		return m.cfg.LeftPanelWidth
+	}
+	return 38
+}
+
+func (m *Model) statusCounts() string {
+	counts := map[agent.Status]int{}
+	for _, e := range m.entries {
+		counts[e.agent.Status()]++
+	}
+	var parts []string
+	if n := counts[agent.StatusRunning]; n > 0 {
+		parts = append(parts, lipgloss.NewStyle().Foreground(colorGreen).Render(fmt.Sprintf("%d running", n)))
+	}
+	if n := counts[agent.StatusWaiting]; n > 0 {
+		parts = append(parts, lipgloss.NewStyle().Foreground(colorYellow).Render(fmt.Sprintf("%d waiting", n)))
+	}
+	if n := counts[agent.StatusDone]; n > 0 {
+		parts = append(parts, lipgloss.NewStyle().Foreground(colorPurple).Render(fmt.Sprintf("%d done", n)))
+	}
+	if n := counts[agent.StatusError]; n > 0 {
+		parts = append(parts, lipgloss.NewStyle().Foreground(colorRed).Render(fmt.Sprintf("%d error", n)))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, styleMuted.Render(" · "))
+}
+
+func (m *Model) renderHelp() string {
+	w := 48
+	if m.width-8 < w {
+		w = m.width - 8
+	}
+
+	type binding struct{ key, desc string }
+	sections := []struct {
+		title    string
+		bindings []binding
+	}{
+		{"Navigation", []binding{
+			{"↑ / k", "move up"},
+			{"↓ / j", "move down"},
+		}},
+		{"Worktrees", []binding{
+			{"n", "new worktree"},
+			{"D", "delete worktree"},
+			{"R", "refresh list"},
+		}},
+		{"Agents", []binding{
+			{"r", "run agent"},
+			{"x", "kill agent"},
+			{"a", "attach to session"},
+			{"i", "send input"},
+		}},
+		{"View", []binding{
+			{"d", "view diff"},
+			{"?", "toggle help"},
+			{"q", "quit"},
+		}},
+	}
+
+	var lines []string
+	lines = append(lines, lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render("Keybindings"), "")
+	for _, section := range sections {
+		lines = append(lines, lipgloss.NewStyle().Foreground(colorMuted).Bold(true).Render(section.title))
+		for _, b := range section.bindings {
+			lines = append(lines, fmt.Sprintf("  %s  %s", styleKey.Render(b.key), styleMuted.Render(b.desc)))
+		}
+		lines = append(lines, "")
+	}
+	lines = append(lines, styleMuted.Render("esc / q / ?  close"))
+
+	inner := lipgloss.NewStyle().Width(w - 4).Render(strings.Join(lines, "\n"))
+	card := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorBorder).
+		Padding(1, 2).
+		Render(inner)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+}
+
+// entryAtY maps a terminal row (0-based) in the left panel to an entry index.
+// Must stay in sync with renderWorktreePanel block heights.
+func (m *Model) entryAtY(y int) int {
+	const panelContentStartRow = 2 // border-top (1) + title row (1)
+	row := y - panelContentStartRow
+	if row < 0 {
+		return -1
+	}
+	for i, e := range m.entries {
+		blockH := 2 // line1 + line3
+		if !e.wt.IsMain && e.wt.BaseBranch != "" {
+			blockH = 3 // line1 + line2 (base) + line3
+		}
+		if row < blockH {
+			return i
+		}
+		row -= blockH
+		if i < len(m.entries)-1 {
+			row-- // separator line
+		}
+		if row < 0 {
+			return -1 // clicked on separator
+		}
+	}
+	return -1
+}
+
+func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.mode != modeNormal {
+		return m, nil
+	}
+	leftW := m.leftPanelWidth()
+	switch msg.Button {
+	case tea.MouseButtonLeft:
+		if msg.Action == tea.MouseActionRelease && msg.X < leftW+2 {
+			if idx := m.entryAtY(msg.Y); idx >= 0 {
+				m.cursor = idx
+				m.entries[m.cursor].unread = false
+				m.syncOutputViewport()
+			}
+		}
+	case tea.MouseButtonWheelUp:
+		m.outputVP.LineUp(3)
+	case tea.MouseButtonWheelDown:
+		m.outputVP.LineDown(3)
+	}
+	return m, nil
 }
 
 func max(a, b int) int {

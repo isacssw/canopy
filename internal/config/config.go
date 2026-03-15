@@ -10,8 +10,9 @@ import (
 )
 
 type Config struct {
-	AgentCommand string `json:"agent_command"`
-	RepoRoot     string `json:"repo_root"`
+	AgentCommand   string `json:"agent_command"`
+	RepoRoot       string `json:"repo_root"`
+	LeftPanelWidth int    `json:"left_panel_width,omitempty"` // 0 = default 38
 }
 
 func DefaultConfigPath() string {
