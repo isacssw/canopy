@@ -78,13 +78,16 @@ func Create(repoRoot, path, branch, baseBranch string) error {
 	return nil
 }
 
-// Delete removes a git worktree.
-func Delete(repoRoot, path string) error {
+// Delete removes a git worktree and its branch.
+func Delete(repoRoot, path, branch string) error {
 	cmd := exec.Command("git", "worktree", "remove", "--force", path)
 	cmd.Dir = repoRoot
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git worktree remove: %w\n%s", err, string(out))
+	}
+	if branch != "" {
+		exec.Command("git", "-C", repoRoot, "branch", "-D", branch).Run() //nolint
 	}
 	return nil
 }

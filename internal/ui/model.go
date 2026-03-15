@@ -480,7 +480,7 @@ func (m *Model) deleteWorktree() tea.Cmd {
 	a := m.entries[m.cursor].agent
 	return func() tea.Msg {
 		a.Kill()
-		if err := worktree.Delete(m.cfg.RepoRoot, wt.Path); err != nil {
+		if err := worktree.Delete(m.cfg.RepoRoot, wt.Path, wt.Branch); err != nil {
 			return errMsg{err}
 		}
 		return m.refreshWorktrees()()
