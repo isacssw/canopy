@@ -1,6 +1,25 @@
 # canopy
 
-A terminal UI orchestrator for running multiple Claude Code agents across git worktrees.
+**canopy** is a terminal UI for developers running multiple AI coding agents in parallel. One view. All your agents.
+
+![Go version](https://img.shields.io/github/go-mod/go-version/isacssw/canopy)
+[![Go Report Card](https://goreportcard.com/badge/github.com/isacssw/canopy)](https://goreportcard.com/report/github.com/isacssw/canopy)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-blue)
+
+## Table of Contents
+
+- [Why canopy?](#why-canopy)
+- [Demo](#demo)
+- [Requirements](#requirements)
+- [Install](#install)
+- [Usage](#usage)
+- [Keybinds](#keybinds)
+- [How it works](#how-it-works)
+- [Config](#config)
+- [Contributing](#contributing)
+- [Roadmap](#roadmap)
+- [License](#license)
 
 ```
 ┌──────────────────────────────┬─────────────────────────────────────┐
@@ -23,6 +42,14 @@ A terminal UI orchestrator for running multiple Claude Code agents across git wo
 ```
 
 Each worktree gets a dedicated **tmux session** so Claude Code runs in a real terminal with full PTY support. Canopy is the view from above — monitor all your agents at a glance, attach to any one when you need to interact directly.
+
+## Why canopy?
+
+Managing 3–5 parallel AI agents across separate terminals is chaotic — you have no overview of what's running, you're constantly switching windows, and there's no signal for when an agent needs your input. Canopy is the persistent view above all of them: one place to see every agent's state, catch anything waiting for you, and drop in exactly when needed.
+
+## Demo
+
+> 🎥 GIF coming soon — [watch the demo video](#)
 
 ## Requirements
 
@@ -55,6 +82,11 @@ canopy
 
 First run will prompt for your agent command (default: `claude`).
 
+```bash
+canopy --help      # show keybinds and usage
+canopy --version   # print version
+```
+
 Config is saved to `~/.config/canopy/config.json`.
 
 ## Keybinds
@@ -74,7 +106,7 @@ Config is saved to `~/.config/canopy/config.json`.
 
 ### Attaching to an agent
 
-Press `a` to drop into the agent's tmux session and interact with Claude directly. Canopy suspends while you're attached. Press `Ctrl+B D` to detach and return to canopy.
+Press `a` to drop into the agent's tmux session and interact with Claude directly. Canopy suspends while you're attached. Press `Ctrl+b d` to detach and return to canopy.
 
 ## Agent states
 
@@ -106,6 +138,10 @@ Agents keep running after you quit canopy — they're just tmux sessions. You ca
 
 You can use any command here, e.g. `claude --dangerously-skip-permissions` or a custom wrapper script.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) — contributions, bug reports, and feature requests are welcome.
+
 ## Roadmap
 
 - [ ] Output search / filter
@@ -113,3 +149,7 @@ You can use any command here, e.g. `claude --dangerously-skip-permissions` or a 
 - [ ] AI summary of last agent run
 - [ ] Multi-repo support
 - [ ] Export session log
+
+## License
+
+MIT — see [LICENSE](LICENSE)
