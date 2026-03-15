@@ -9,7 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"canopy/internal/config"
+	"github.com/isacssw/canopy/internal/config"
 )
 
 // ── Step types ───────────────────────────────────────────────────────────────

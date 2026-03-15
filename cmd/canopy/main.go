@@ -6,9 +6,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"canopy/internal/agent"
-	"canopy/internal/config"
-	"canopy/internal/ui"
+	"github.com/isacssw/canopy/internal/agent"
+	"github.com/isacssw/canopy/internal/config"
+	"github.com/isacssw/canopy/internal/ui"
 )
 
 func main() {

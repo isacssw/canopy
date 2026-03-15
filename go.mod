@@ -1,4 +1,4 @@
-module canopy
+module github.com/isacssw/canopy
 
 go 1.24.2
 

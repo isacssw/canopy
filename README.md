@@ -32,11 +32,17 @@ Each worktree gets a dedicated **tmux session** so Claude Code runs in a real te
 
 ## Install
 
+**With Go (recommended):**
 ```bash
-git clone https://github.com/you/canopy
+go install github.com/isacssw/canopy/cmd/canopy@latest
+```
+
+**From source:**
+```bash
+git clone https://github.com/isacssw/canopy
 cd canopy
 go build -o canopy ./cmd/canopy
-sudo mv canopy /usr/local/bin/
+mv canopy ~/.local/bin/   # or any directory on your PATH
 ```
 
 ## Usage

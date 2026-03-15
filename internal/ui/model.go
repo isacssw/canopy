@@ -11,9 +11,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"canopy/internal/agent"
-	"canopy/internal/config"
-	"canopy/internal/worktree"
+	"github.com/isacssw/canopy/internal/agent"
+	"github.com/isacssw/canopy/internal/config"
+	"github.com/isacssw/canopy/internal/worktree"
 )
 
 // ── Colours & styles ────────────────────────────────────────────────────────
