@@ -79,6 +79,24 @@ func New() *Agent {
 	return &Agent{status: StatusIdle}
 }
 
+// Reconnect checks whether a tmux session for this worktree already exists
+// (e.g. from a previous canopy instance) and resumes polling if so.
+// Returns true if an existing session was found.
+func (a *Agent) Reconnect(workdir, branch, repoRoot string) bool {
+	name := sessionName(repoRoot, branch, workdir)
+	if err := exec.Command("tmux", "has-session", "-t", name).Run(); err != nil {
+		return false
+	}
+	a.mu.Lock()
+	a.sessionName = name
+	a.status = StatusRunning
+	a.stopPoll = make(chan struct{})
+	stop := a.stopPoll
+	a.mu.Unlock()
+	go a.pollLoop(stop)
+	return true
+}
+
 func (a *Agent) Status() Status {
 	a.mu.Lock()
 	defer a.mu.Unlock()

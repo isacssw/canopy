@@ -174,6 +174,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cursor >= len(m.entries) {
 			m.cursor = max(0, len(m.entries)-1)
 		}
+		// Wire OnChange for any reconnected agents so UI updates as they poll.
+		p := m.program
+		for idx := range m.entries {
+			if m.entries[idx].agent.SessionName() != "" {
+				idx := idx
+				m.entries[idx].agent.OnChange = func() {
+					if p != nil {
+						p.Send(agentChangedMsg{idx: idx})
+					}
+				}
+			}
+		}
 		m.syncOutputViewport()
 
 	case agentChangedMsg:
@@ -346,6 +358,7 @@ func (m *Model) refreshWorktrees() tea.Cmd {
 			a, ok := agentMap[wt.Path]
 			if !ok {
 				a = agent.New()
+				a.Reconnect(wt.Path, wt.Branch, m.cfg.RepoRoot)
 			}
 			entries = append(entries, entry{wt: wt, agent: a})
 		}
