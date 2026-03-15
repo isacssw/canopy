@@ -11,7 +11,41 @@ import (
 	"github.com/isacssw/canopy/internal/ui"
 )
 
+var version = "dev"
+
 func main() {
+	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		fmt.Println(version)
+		return
+	}
+
+	if len(os.Args) == 2 && (os.Args[1] == "--help" || os.Args[1] == "-h") {
+		fmt.Println("canopy - manage Claude Code agents across git worktrees")
+		fmt.Println()
+		fmt.Println("Usage: canopy [--version] [--help]")
+		fmt.Println()
+		fmt.Println("Keybindings:")
+		fmt.Println("  Navigation")
+		fmt.Println("    j / ↓    move down")
+		fmt.Println("    k / ↑    move up")
+		fmt.Println()
+		fmt.Println("  Worktrees")
+		fmt.Println("    n        new worktree")
+		fmt.Println("    D        delete worktree")
+		fmt.Println("    R        refresh list")
+		fmt.Println()
+		fmt.Println("  Agents")
+		fmt.Println("    r        run agent")
+		fmt.Println("    a        attach to session")
+		fmt.Println("    x        kill agent")
+		fmt.Println("    i        send input")
+		fmt.Println()
+		fmt.Println("  Other")
+		fmt.Println("    d        open diff view")
+		fmt.Println("    q        quit")
+		return
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error loading config: %v\n", err)
