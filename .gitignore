@@ -7,3 +7,7 @@
 # Go test cache / coverage
 *.test
 *.out
+
+# Internal planning files
+DO_BEFORE_RELEASE.md
+UX_BACKLOG.md
