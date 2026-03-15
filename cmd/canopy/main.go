@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"os"
-	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -21,6 +19,7 @@ func main() {
 	}
 
 	if cfg == nil {
+		ui.PrintWelcome()
 		cfg, err = runSetup()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "setup failed: %v\n", err)
@@ -33,7 +32,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Always re-detect repo root from cwd (allows running from any worktree)
+	// Always re-detect repo root from cwd (allows running from any worktree).
 	root, err := config.DetectRepoRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "not in a git repo: %v\n", err)
@@ -58,28 +57,14 @@ func main() {
 }
 
 func runSetup() (*config.Config, error) {
-	r := bufio.NewReader(os.Stdin)
-
-	fmt.Println("╭─────────────────────────────────────╮")
-	fmt.Println("│   canopy — first-run setup          │")
-	fmt.Println("╰─────────────────────────────────────╯")
-	fmt.Println()
-
-	fmt.Print("Agent command to run in each worktree\n[default: claude]: ")
-	cmd, _ := r.ReadString('\n')
-	cmd = strings.TrimSpace(cmd)
-	if cmd == "" {
-		cmd = "claude"
-	}
-
-	cfg := &config.Config{
-		AgentCommand: cmd,
-	}
-
-	if err := config.Save(cfg); err != nil {
+	m := ui.NewSetupModel()
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
 		return nil, err
 	}
-
-	fmt.Printf("\n✓ Saved to %s\n\n", config.DefaultConfigPath())
+	cfg := m.Result()
+	if cfg == nil {
+		return nil, fmt.Errorf("setup cancelled")
+	}
 	return cfg, nil
 }
