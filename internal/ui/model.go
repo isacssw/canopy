@@ -231,6 +231,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case "n":
 			m.enterInput(modeNewWorktree, "New branch name (e.g. feat/my-feature): ", "")
+			return m, nil
 		case "r":
 			return m, m.runAgent()
 		case "x":
@@ -252,6 +253,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				s := m.entries[m.cursor].agent.Status()
 				if s == agent.StatusWaiting {
 					m.enterInput(modeSendInput, "Send to agent: ", "")
+					return m, nil
 				}
 			}
 		case "a":
@@ -494,8 +496,13 @@ func (m *Model) View() string {
 
 	status := m.renderStatusBar()
 
-	if m.mode == modeNewWorktree || m.mode == modeNewWorktreeBase || m.mode == modeSendInput {
-		return lipgloss.JoinVertical(lipgloss.Left, body, m.renderInputBar(), status)
+	switch m.mode {
+	case modeNewWorktree:
+		return m.renderInputModal("New Worktree", "Branch name")
+	case modeNewWorktreeBase:
+		return m.renderInputModal("Base Branch", "Base branch")
+	case modeSendInput:
+		return m.renderInputModal("Send to Agent", "Message")
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, body, status)
@@ -619,6 +626,37 @@ func (m *Model) renderInputBar() string {
 		PaddingLeft(1).
 		Width(m.width).
 		Render(hint + m.input.View())
+}
+
+func (m *Model) renderInputModal(title, hint string) string {
+	w := m.width - 8
+	if w > 56 {
+		w = 56
+	}
+
+	titleLine := lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render(title)
+	hintLine := styleMuted.Render(hint)
+	inputLine := "> " + m.input.View()
+	keysLine := styleMuted.Render("enter ↵ confirm   esc quit")
+
+	inner := lipgloss.NewStyle().Width(w - 4).Render(
+		lipgloss.JoinVertical(lipgloss.Left,
+			titleLine,
+			"",
+			hintLine,
+			inputLine,
+			"",
+			keysLine,
+		),
+	)
+
+	card := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorBorder).
+		Padding(1, 2).
+		Render(inner)
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
 }
 
 func key(k, label string) string {
