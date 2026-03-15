@@ -1,0 +1,13 @@
+linters:
+  enable:
+    - gofmt
+    - govet
+    - errcheck
+    - staticcheck
+    - unused
+linters-settings:
+  gofmt:
+    simplify: true
+issues:
+  exclude-dirs:
+    - vendor
