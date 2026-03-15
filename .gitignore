@@ -1,0 +1,9 @@
+# Binary output
+canopy
+
+# Claude Code local settings
+.claude/
+
+# Go test cache / coverage
+*.test
+*.out
