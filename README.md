@@ -29,7 +29,7 @@
 │    main ← feat/auth-flow     │  ⎯ Writing AuthProvider.tsx         │
 │    running                   │  ✔ Done. 3 files changed.           │
 │                              │                                     │
-│  ⚠ feat/onboarding-ui        │                                     │
+│  ⚠ feat/onboarding-ui ●      │                                     │
 │    main ← feat/onboarding-ui │                                     │
 │    waiting                   │                                     │
 │                              │                                     │
@@ -37,7 +37,7 @@
 │    main ← fix/email-capture  │                                     │
 │    done                      │                                     │
 ├──────────────────────────────┴─────────────────────────────────────┤
-│ n new  r run  a attach  x kill  d diff  D delete  i send  R refresh│
+│ ? help  n new  r run  a attach  x kill  d diff  D delete  R refresh│  1 running · 1 waiting
 └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -102,7 +102,12 @@ Config is saved to `~/.config/canopy/config.json`.
 | `D` | Delete worktree (with confirmation) |
 | `i` | Send input to agent when it's waiting |
 | `R` | Refresh worktree list |
+| `?` | Toggle keybindings help overlay |
 | `q` | Quit |
+
+### Mouse support
+
+Click any worktree in the left panel to select it. Use the scroll wheel to scroll the output panel.
 
 ### Attaching to an agent
 
@@ -118,6 +123,10 @@ Press `a` to drop into the agent's tmux session and interact with Claude directl
 | `✓` | done | Agent finished cleanly |
 | `✗` | error | Agent exited with error |
 
+When an agent transitions to **waiting**, canopy marks it with a yellow `●` badge in the list and emits a terminal bell — so you notice even when working in another window. The badge clears when you navigate to that worktree.
+
+The status bar shows a live summary of agent counts (e.g. `1 running · 2 waiting`) on the right side.
+
 ## How it works
 
 When you press `r`, canopy creates a detached tmux session named `canopy_<repo-hash>_<branch>` and launches your agent command inside it. The output panel shows a live snapshot of the tmux pane, refreshed every 500ms.
@@ -132,11 +141,15 @@ Agents keep running after you quit canopy — they're just tmux sessions. You ca
 
 ```json
 {
-  "agent_command": "claude"
+  "agent_command": "claude",
+  "left_panel_width": 38
 }
 ```
 
-You can use any command here, e.g. `claude --dangerously-skip-permissions` or a custom wrapper script.
+| Field | Default | Description |
+|-------|---------|-------------|
+| `agent_command` | `"claude"` | Command used to launch the agent. Accepts any executable or wrapper script, e.g. `claude --dangerously-skip-permissions`. |
+| `left_panel_width` | `38` | Width of the worktree list panel in columns. Minimum `20`. Omit to use the default. |
 
 ## Contributing
 
