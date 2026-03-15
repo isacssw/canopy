@@ -99,7 +99,8 @@ Config is saved to `~/.config/canopy/config.json`.
 | `a` | Attach to the live tmux session (full interactive Claude) |
 | `x` | Kill running agent |
 | `d` | View git diff for selected worktree |
-| `D` | Delete worktree (with confirmation) |
+| `D` | Delete worktree — confirm with `y`, then 5-second undo window |
+| `u` / `esc` | Cancel a pending delete during the countdown |
 | `i` | Send input to agent when it's waiting |
 | `R` | Refresh worktree list |
 | `?` | Toggle keybindings help overlay |
@@ -127,6 +128,10 @@ When an agent transitions to **waiting**, canopy marks it with a yellow `●` ba
 
 The status bar shows a live summary of agent counts (e.g. `1 running · 2 waiting`) on the right side.
 
+### Idle timeout
+
+With `idle_timeout_secs` set, any agent that has produced no new output for that many seconds is automatically promoted from **running** to **waiting**. This is a useful fallback for agents that don't emit Claude Code's standard input-prompt patterns (e.g. custom wrappers or other AI tools). Set to `0` (the default) to disable.
+
 ## How it works
 
 When you press `r`, canopy creates a detached tmux session named `canopy_<repo-hash>_<branch>` and launches your agent command inside it. The output panel shows a live snapshot of the tmux pane, refreshed every 500ms.
@@ -142,7 +147,9 @@ Agents keep running after you quit canopy — they're just tmux sessions. You ca
 ```json
 {
   "agent_command": "claude",
-  "left_panel_width": 38
+  "left_panel_width": 38,
+  "theme": "github-dark",
+  "idle_timeout_secs": 0
 }
 ```
 
@@ -150,6 +157,21 @@ Agents keep running after you quit canopy — they're just tmux sessions. You ca
 |-------|---------|-------------|
 | `agent_command` | `"claude"` | Command used to launch the agent. Accepts any executable or wrapper script, e.g. `claude --dangerously-skip-permissions`. |
 | `left_panel_width` | `38` | Width of the worktree list panel in columns. Minimum `20`. Omit to use the default. |
+| `theme` | `"github-dark"` | UI colour theme. Options: `"github-dark"`, `"nord"`, `"catppuccin"`, `"light"`. Omit or leave empty for the default. |
+| `idle_timeout_secs` | `0` | Seconds of no new agent output before status is promoted from **running** to **waiting**. `0` disables the timeout. Useful for non-Claude agents that don't emit standard input-prompt patterns. |
+
+### Themes
+
+| Name | Description |
+|------|-------------|
+| `github-dark` | Default — GitHub dark palette |
+| `nord` | Nord palette — cool blues and greens |
+| `catppuccin` | Catppuccin Mocha — pastel dark theme |
+| `light` | Light terminal palette |
+
+### Soft delete
+
+Pressing `D` on a worktree asks for confirmation. After pressing `y`, canopy starts a 5-second countdown displayed in the status bar (`Deleting "branch" in 5s…  [u]ndo`). Press `u`, `esc`, or `n` at any point during the countdown to cancel. The delete only executes when the timer reaches zero.
 
 ## Contributing
 

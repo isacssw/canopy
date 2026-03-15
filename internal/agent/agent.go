@@ -67,12 +67,23 @@ func sessionName(repoRoot, branch, worktreePath string) string {
 
 // Agent manages a Claude Code process via a dedicated tmux session.
 type Agent struct {
-	mu          sync.Mutex
-	sessionName string
-	status      Status
-	snapshot    string
-	OnChange    func()
-	stopPoll    chan struct{}
+	mu                 sync.Mutex
+	sessionName        string
+	status             Status
+	snapshot           string
+	OnChange           func()
+	stopPoll           chan struct{}
+	lastSnapshotChange time.Time
+	idleTimeoutSecs    int
+}
+
+// SetIdleTimeout configures the agent-agnostic idle timeout. When the tmux
+// pane snapshot has not changed for secs seconds, a Running status is
+// overridden to Waiting. Set to 0 to disable.
+func (a *Agent) SetIdleTimeout(secs int) {
+	a.mu.Lock()
+	a.idleTimeoutSecs = secs
+	a.mu.Unlock()
 }
 
 func New() *Agent {
@@ -292,6 +303,15 @@ func (a *Agent) tick() bool {
 		// Kill() was called while we were polling — don't overwrite its state
 		a.mu.Unlock()
 		return false
+	}
+	if a.snapshot != snapshot {
+		a.lastSnapshotChange = time.Now()
+	}
+	if newStatus == StatusRunning &&
+		a.idleTimeoutSecs > 0 &&
+		!a.lastSnapshotChange.IsZero() &&
+		time.Since(a.lastSnapshotChange) >= time.Duration(a.idleTimeoutSecs)*time.Second {
+		newStatus = StatusWaiting
 	}
 	changed := a.snapshot != snapshot || a.status != newStatus
 	a.snapshot = snapshot

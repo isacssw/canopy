@@ -10,9 +10,11 @@ import (
 )
 
 type Config struct {
-	AgentCommand   string `json:"agent_command"`
-	RepoRoot       string `json:"repo_root"`
-	LeftPanelWidth int    `json:"left_panel_width,omitempty"` // 0 = default 38
+	AgentCommand    string `json:"agent_command"`
+	RepoRoot        string `json:"repo_root"`
+	LeftPanelWidth  int    `json:"left_panel_width,omitempty"`  // 0 = default 38
+	Theme           string `json:"theme,omitempty"`             // "", "github-dark", "nord", "catppuccin", "light"
+	IdleTimeoutSecs int    `json:"idle_timeout_secs,omitempty"` // 0 = disabled
 }
 
 func DefaultConfigPath() string {

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -17,62 +18,58 @@ import (
 	"github.com/isacssw/canopy/internal/worktree"
 )
 
-// ── Colours & styles ────────────────────────────────────────────────────────
+// ── Styles ───────────────────────────────────────────────────────────────────
 
-var (
-	colorBorder = lipgloss.Color("#30363d")
-	colorMuted  = lipgloss.Color("#8b949e")
-	colorText   = lipgloss.Color("#e6edf3")
-	colorAccent = lipgloss.Color("#58a6ff")
-	colorGreen  = lipgloss.Color("#3fb950")
-	colorYellow = lipgloss.Color("#d29922")
-	colorRed    = lipgloss.Color("#f85149")
-	colorPurple = lipgloss.Color("#bc8cff")
+type styles struct {
+	panelBorder lipgloss.Style
+	panelTitle  lipgloss.Style
+	selected    lipgloss.Style
+	normal      lipgloss.Style
+	muted       lipgloss.Style
+	statusBar   lipgloss.Style
+	key         lipgloss.Style
+}
 
-	stylePanelBorder = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(colorBorder)
-
-	stylePanelTitle = lipgloss.NewStyle().
-			Foreground(colorAccent).
+func newStyles(t Theme) styles {
+	return styles{
+		panelBorder: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(t.Border),
+		panelTitle: lipgloss.NewStyle().
+			Foreground(t.Accent).
 			Bold(true).
-			PaddingLeft(1)
-
-	styleSelected = lipgloss.NewStyle().
-			Background(lipgloss.Color("#1c2128")).
-			Foreground(colorAccent).
-			Bold(true)
-
-	styleNormal = lipgloss.NewStyle().
-			Foreground(colorText)
-
-	styleMuted = lipgloss.NewStyle().Foreground(colorMuted)
-
-	styleStatusBar = lipgloss.NewStyle().
-			Background(lipgloss.Color("#161b22")).
-			Foreground(colorMuted).
+			PaddingLeft(1),
+		selected: lipgloss.NewStyle().
+			Background(t.SelectedBg).
+			Foreground(t.Accent).
+			Bold(true),
+		normal: lipgloss.NewStyle().Foreground(t.Text),
+		muted:  lipgloss.NewStyle().Foreground(t.Muted),
+		statusBar: lipgloss.NewStyle().
+			Background(t.StatusBarBg).
+			Foreground(t.Muted).
 			PaddingLeft(1).
-			PaddingRight(1)
-
-	styleKey = lipgloss.NewStyle().
-			Background(lipgloss.Color("#21262d")).
-			Foreground(colorAccent).
+			PaddingRight(1),
+		key: lipgloss.NewStyle().
+			Background(t.KeyBg).
+			Foreground(t.Accent).
 			PaddingLeft(1).
-			PaddingRight(1)
-)
+			PaddingRight(1),
+	}
+}
 
-func statusStyle(s agent.Status) lipgloss.Style {
+func (m *Model) statusStyle(s agent.Status) lipgloss.Style {
 	switch s {
 	case agent.StatusRunning:
-		return lipgloss.NewStyle().Foreground(colorGreen)
+		return lipgloss.NewStyle().Foreground(m.theme.Green)
 	case agent.StatusWaiting:
-		return lipgloss.NewStyle().Foreground(colorYellow).Bold(true)
+		return lipgloss.NewStyle().Foreground(m.theme.Yellow).Bold(true)
 	case agent.StatusDone:
-		return lipgloss.NewStyle().Foreground(colorPurple)
+		return lipgloss.NewStyle().Foreground(m.theme.Purple)
 	case agent.StatusError:
-		return lipgloss.NewStyle().Foreground(colorRed)
+		return lipgloss.NewStyle().Foreground(m.theme.Red)
 	default:
-		return lipgloss.NewStyle().Foreground(colorMuted)
+		return lipgloss.NewStyle().Foreground(m.theme.Muted)
 	}
 }
 
@@ -89,6 +86,15 @@ func statusIcon(s agent.Status) string {
 	default:
 		return "○"
 	}
+}
+
+// ── Soft-delete state ────────────────────────────────────────────────────────
+
+type pendingDeleteState struct {
+	wtPath   string
+	branch   string
+	ag       *agent.Agent
+	secsLeft int
 }
 
 // ── State entry ─────────────────────────────────────────────────────────────
@@ -111,6 +117,7 @@ const (
 	modeSendInput
 	modeDiff
 	modeConfirmDelete
+	modePendingDelete
 	modeSetupAgent
 	modeHelp
 )
@@ -121,6 +128,7 @@ type agentChangedMsg struct{ idx int }
 type worktreesRefreshedMsg struct{ entries []entry }
 type errMsg struct{ err error }
 type diffReadyMsg struct{ content string }
+type deleteCountdownMsg struct{ secsLeft int }
 
 // ── Model ────────────────────────────────────────────────────────────────────
 
@@ -142,15 +150,27 @@ type Model struct {
 
 	statusMsg string
 	program   *tea.Program
+
+	theme         Theme
+	st            styles
+	pendingDelete *pendingDeleteState
 }
 
 func New(cfg *config.Config) *Model {
 	ti := textinput.New()
 	ti.CharLimit = 80
 
+	themeName := ""
+	if cfg != nil {
+		themeName = cfg.Theme
+	}
+	t := ThemeByName(themeName)
+
 	return &Model{
 		cfg:   cfg,
 		input: ti,
+		theme: t,
+		st:    newStyles(t),
 	}
 }
 
@@ -214,6 +234,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.diffVP.SetContent(msg.content)
 		m.mode = modeDiff
 		m.statusMsg = "esc to close diff"
+
+	case deleteCountdownMsg:
+		if m.pendingDelete == nil {
+			return m, nil
+		}
+		if msg.secsLeft > 0 {
+			m.pendingDelete.secsLeft = msg.secsLeft
+			next := msg.secsLeft - 1
+			return m, tea.Tick(time.Second, func(t time.Time) tea.Msg {
+				return deleteCountdownMsg{secsLeft: next}
+			})
+		}
+		// secsLeft == 0: execute the delete
+		return m, m.executePendingDelete()
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -348,10 +382,29 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case modeConfirmDelete:
 		switch msg.String() {
 		case "y", "Y":
-			return m, m.deleteWorktree()
+			wt := m.entries[m.cursor].wt
+			ag := m.entries[m.cursor].agent
+			m.pendingDelete = &pendingDeleteState{
+				wtPath:   wt.Path,
+				branch:   wt.Branch,
+				ag:       ag,
+				secsLeft: 5,
+			}
+			m.mode = modePendingDelete
+			return m, tea.Tick(time.Second, func(t time.Time) tea.Msg {
+				return deleteCountdownMsg{secsLeft: 4}
+			})
 		default:
 			m.mode = modeNormal
 			m.statusMsg = ""
+		}
+
+	case modePendingDelete:
+		switch msg.String() {
+		case "esc", "n", "u":
+			m.pendingDelete = nil
+			m.mode = modeNormal
+			m.statusMsg = "delete cancelled"
 		}
 
 	case modeHelp:
@@ -393,6 +446,7 @@ func (m *Model) refreshWorktrees() tea.Cmd {
 			if !ok {
 				a := agent.New()
 				a.Reconnect(wt.Path, wt.Branch, m.cfg.RepoRoot)
+				a.SetIdleTimeout(m.cfg.IdleTimeoutSecs)
 				st = entryState{agent: a}
 			}
 			entries = append(entries, entry{wt: wt, agent: st.agent, unread: st.unread, prevStatus: st.prevStatus})
@@ -499,6 +553,7 @@ func (m *Model) createWorktree(branch, base string) tea.Cmd {
 			a, ok := agentMap[wt.Path]
 			if !ok {
 				a = agent.New()
+				a.SetIdleTimeout(m.cfg.IdleTimeoutSecs)
 			}
 			entries = append(entries, entry{wt: wt, agent: a})
 		}
@@ -506,16 +561,17 @@ func (m *Model) createWorktree(branch, base string) tea.Cmd {
 	}
 }
 
-func (m *Model) deleteWorktree() tea.Cmd {
+func (m *Model) executePendingDelete() tea.Cmd {
+	pd := m.pendingDelete
+	m.pendingDelete = nil
 	m.mode = modeNormal
-	if len(m.entries) == 0 {
+	m.statusMsg = ""
+	if pd == nil {
 		return nil
 	}
-	wt := m.entries[m.cursor].wt
-	a := m.entries[m.cursor].agent
 	return func() tea.Msg {
-		a.Kill()
-		if err := worktree.Delete(m.cfg.RepoRoot, wt.Path, wt.Branch); err != nil {
+		pd.ag.Kill()
+		if err := worktree.Delete(m.cfg.RepoRoot, pd.wtPath, pd.branch); err != nil {
 			return errMsg{err}
 		}
 		return m.refreshWorktrees()()
@@ -561,12 +617,12 @@ func (m *Model) View() string {
 }
 
 func (m *Model) renderWorktreePanel(w, h int) string {
-	title := stylePanelTitle.Render("  worktrees")
+	title := m.st.panelTitle.Render("  worktrees")
 
 	var rows []string
 	for i, e := range m.entries {
 		icon := statusIcon(e.agent.Status())
-		iconS := statusStyle(e.agent.Status()).Render(icon)
+		iconS := m.statusStyle(e.agent.Status()).Render(icon)
 
 		branch := e.wt.Branch
 		if branch == "" {
@@ -575,21 +631,21 @@ func (m *Model) renderWorktreePanel(w, h int) string {
 
 		base := ""
 		if e.wt.BaseBranch != "" {
-			base = styleMuted.Render("  " + e.wt.BaseBranch + " ← " + branch)
+			base = m.st.muted.Render("  " + e.wt.BaseBranch + " ← " + branch)
 		}
 
-		statusTxt := statusStyle(e.agent.Status()).Render(e.agent.Status().String())
+		statusTxt := m.statusStyle(e.agent.Status()).Render(e.agent.Status().String())
 
 		badge := ""
 		if e.unread {
-			badge = " " + lipgloss.NewStyle().Foreground(colorYellow).Bold(true).Render("●")
+			badge = " " + lipgloss.NewStyle().Foreground(m.theme.Yellow).Bold(true).Render("●")
 		}
-		line1 := fmt.Sprintf(" %s %s%s", iconS, styleNormal.Render(branch), badge)
+		line1 := fmt.Sprintf(" %s %s%s", iconS, m.st.normal.Render(branch), badge)
 		line2 := base
 		line3 := fmt.Sprintf("   %s", statusTxt)
 
 		if e.wt.IsMain {
-			line1 = fmt.Sprintf(" %s %s %s%s", iconS, styleNormal.Render(branch), styleMuted.Render("(main)"), badge)
+			line1 = fmt.Sprintf(" %s %s %s%s", iconS, m.st.normal.Render(branch), m.st.muted.Render("(main)"), badge)
 			line2 = ""
 		}
 
@@ -600,24 +656,24 @@ func (m *Model) renderWorktreePanel(w, h int) string {
 		block += "\n" + line3
 
 		if i == m.cursor {
-			block = styleSelected.Width(w - 4).Render(block)
+			block = m.st.selected.Width(w - 4).Render(block)
 		} else {
 			block = lipgloss.NewStyle().Width(w - 4).Render(block)
 		}
 
 		rows = append(rows, block)
 		if i < len(m.entries)-1 {
-			rows = append(rows, styleMuted.Render(strings.Repeat("─", w-4)))
+			rows = append(rows, m.st.muted.Render(strings.Repeat("─", w-4)))
 		}
 	}
 
 	if len(rows) == 0 {
-		rows = []string{styleMuted.Render("  no worktrees found\n  press n to create one")}
+		rows = []string{m.st.muted.Render("  no worktrees found\n  press n to create one")}
 	}
 
 	content := strings.Join(rows, "\n")
 
-	panel := stylePanelBorder.
+	panel := m.st.panelBorder.
 		Width(w).
 		Height(h).
 		Render(title + "\n" + content)
@@ -633,23 +689,23 @@ func (m *Model) renderOutputPanel(w, h int) string {
 		if branch == "" {
 			branch = filepath.Base(e.wt.Path)
 		}
-		title = fmt.Sprintf(" agent output  %s", styleMuted.Render("← "+branch))
+		title = fmt.Sprintf(" agent output  %s", m.st.muted.Render("← "+branch))
 	}
 
 	content := m.outputVP.View()
 
-	panel := stylePanelBorder.
+	panel := m.st.panelBorder.
 		Width(w).
 		Height(h).
-		Render(stylePanelTitle.Render(title) + "\n" + content)
+		Render(m.st.panelTitle.Render(title) + "\n" + content)
 
 	return panel
 }
 
 func (m *Model) renderDiff() string {
-	title := stylePanelTitle.Render(" diff")
+	title := m.st.panelTitle.Render(" diff")
 	content := m.diffVP.View()
-	panel := stylePanelBorder.
+	panel := m.st.panelBorder.
 		Width(m.width - 2).
 		Height(m.height - 3).
 		Render(title + "\n" + content)
@@ -657,17 +713,25 @@ func (m *Model) renderDiff() string {
 }
 
 func (m *Model) renderStatusBar() string {
+	if m.mode == modePendingDelete && m.pendingDelete != nil {
+		pd := m.pendingDelete
+		deleteMsg := lipgloss.NewStyle().Foreground(m.theme.Red).Render(
+			fmt.Sprintf("Deleting %q in %ds…  [u]ndo", pd.branch, pd.secsLeft),
+		)
+		return m.st.statusBar.Width(m.width).Render(" " + deleteMsg)
+	}
+
 	keys := []string{
-		key("?", "help"),
-		key("n", "new"),
-		key("r", "run"),
-		key("a", "attach"),
-		key("x", "kill"),
-		key("d", "diff"),
-		key("D", "delete"),
-		key("i", "send input"),
-		key("R", "refresh"),
-		key("q", "quit"),
+		m.key("?", "help"),
+		m.key("n", "new"),
+		m.key("r", "run"),
+		m.key("a", "attach"),
+		m.key("x", "kill"),
+		m.key("d", "diff"),
+		m.key("D", "delete"),
+		m.key("i", "send input"),
+		m.key("R", "refresh"),
+		m.key("q", "quit"),
 	}
 	left := strings.Join(keys, "  ")
 
@@ -676,7 +740,7 @@ func (m *Model) renderStatusBar() string {
 		rightParts = append(rightParts, counts)
 	}
 	if m.statusMsg != "" {
-		rightParts = append(rightParts, lipgloss.NewStyle().Foreground(colorYellow).Render(m.statusMsg))
+		rightParts = append(rightParts, lipgloss.NewStyle().Foreground(m.theme.Yellow).Render(m.statusMsg))
 	}
 	right := strings.Join(rightParts, "   ")
 
@@ -686,7 +750,7 @@ func (m *Model) renderStatusBar() string {
 		gap = 2
 	}
 	bar := left + strings.Repeat(" ", gap) + right
-	return styleStatusBar.Width(m.width).Render(bar)
+	return m.st.statusBar.Width(m.width).Render(bar)
 }
 
 func (m *Model) renderInputModal(title, hint string) string {
@@ -695,10 +759,10 @@ func (m *Model) renderInputModal(title, hint string) string {
 		w = 56
 	}
 
-	titleLine := lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render(title)
-	hintLine := styleMuted.Render(hint)
+	titleLine := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Render(title)
+	hintLine := m.st.muted.Render(hint)
 	inputLine := "> " + m.input.View()
-	keysLine := styleMuted.Render("enter ↵ confirm   esc quit")
+	keysLine := m.st.muted.Render("enter ↵ confirm   esc quit")
 
 	inner := lipgloss.NewStyle().Width(w - 4).Render(
 		lipgloss.JoinVertical(lipgloss.Left,
@@ -713,15 +777,15 @@ func (m *Model) renderInputModal(title, hint string) string {
 
 	card := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorBorder).
+		BorderForeground(m.theme.Border).
 		Padding(1, 2).
 		Render(inner)
 
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
 }
 
-func key(k, label string) string {
-	return styleKey.Render(k) + " " + styleMuted.Render(label)
+func (m *Model) key(k, label string) string {
+	return m.st.key.Render(k) + " " + m.st.muted.Render(label)
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -744,12 +808,12 @@ func (m *Model) resizePanels() {
 
 func (m *Model) syncOutputViewport() {
 	if len(m.entries) == 0 {
-		m.outputVP.SetContent(styleMuted.Render("no agent output yet — press r to run"))
+		m.outputVP.SetContent(m.st.muted.Render("no agent output yet — press r to run"))
 		return
 	}
 	snap := m.entries[m.cursor].agent.Snapshot()
 	if snap == "" {
-		m.outputVP.SetContent(styleMuted.Render("no output yet — press r to run agent"))
+		m.outputVP.SetContent(m.st.muted.Render("no output yet — press r to run agent"))
 		return
 	}
 	m.outputVP.SetContent(snap)
@@ -770,21 +834,21 @@ func (m *Model) statusCounts() string {
 	}
 	var parts []string
 	if n := counts[agent.StatusRunning]; n > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorGreen).Render(fmt.Sprintf("%d running", n)))
+		parts = append(parts, lipgloss.NewStyle().Foreground(m.theme.Green).Render(fmt.Sprintf("%d running", n)))
 	}
 	if n := counts[agent.StatusWaiting]; n > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorYellow).Render(fmt.Sprintf("%d waiting", n)))
+		parts = append(parts, lipgloss.NewStyle().Foreground(m.theme.Yellow).Render(fmt.Sprintf("%d waiting", n)))
 	}
 	if n := counts[agent.StatusDone]; n > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorPurple).Render(fmt.Sprintf("%d done", n)))
+		parts = append(parts, lipgloss.NewStyle().Foreground(m.theme.Purple).Render(fmt.Sprintf("%d done", n)))
 	}
 	if n := counts[agent.StatusError]; n > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorRed).Render(fmt.Sprintf("%d error", n)))
+		parts = append(parts, lipgloss.NewStyle().Foreground(m.theme.Red).Render(fmt.Sprintf("%d error", n)))
 	}
 	if len(parts) == 0 {
 		return ""
 	}
-	return strings.Join(parts, styleMuted.Render(" · "))
+	return strings.Join(parts, m.st.muted.Render(" · "))
 }
 
 func (m *Model) renderHelp() string {
@@ -821,20 +885,20 @@ func (m *Model) renderHelp() string {
 	}
 
 	var lines []string
-	lines = append(lines, lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render("Keybindings"), "")
+	lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Render("Keybindings"), "")
 	for _, section := range sections {
-		lines = append(lines, lipgloss.NewStyle().Foreground(colorMuted).Bold(true).Render(section.title))
+		lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Muted).Bold(true).Render(section.title))
 		for _, b := range section.bindings {
-			lines = append(lines, fmt.Sprintf("  %s  %s", styleKey.Render(b.key), styleMuted.Render(b.desc)))
+			lines = append(lines, fmt.Sprintf("  %s  %s", m.st.key.Render(b.key), m.st.muted.Render(b.desc)))
 		}
 		lines = append(lines, "")
 	}
-	lines = append(lines, styleMuted.Render("esc / q / ?  close"))
+	lines = append(lines, m.st.muted.Render("esc / q / ?  close"))
 
 	inner := lipgloss.NewStyle().Width(w - 4).Render(strings.Join(lines, "\n"))
 	card := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorBorder).
+		BorderForeground(m.theme.Border).
 		Padding(1, 2).
 		Render(inner)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
@@ -882,9 +946,9 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case tea.MouseButtonWheelUp:
-		m.outputVP.LineUp(3)
+		m.outputVP.ScrollUp(3)
 	case tea.MouseButtonWheelDown:
-		m.outputVP.LineDown(3)
+		m.outputVP.ScrollDown(3)
 	}
 	return m, nil
 }

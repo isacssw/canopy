@@ -39,15 +39,15 @@ type configSavedMsg struct {
 var (
 	styleSetupCard = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorBorder).
+			BorderForeground(ThemeByName("").Border).
 			Padding(1, 3)
 
-	styleSetupHeading = lipgloss.NewStyle().Foreground(colorText).Bold(true)
-	styleSetupOk      = lipgloss.NewStyle().Foreground(colorGreen)
-	styleSetupWarn    = lipgloss.NewStyle().Foreground(colorYellow)
-	styleSetupHint    = lipgloss.NewStyle().Foreground(colorMuted)
-	styleSummaryKey   = lipgloss.NewStyle().Foreground(colorMuted)
-	styleSummaryVal   = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+	styleSetupHeading = lipgloss.NewStyle().Foreground(ThemeByName("").Text).Bold(true)
+	styleSetupOk      = lipgloss.NewStyle().Foreground(ThemeByName("").Green)
+	styleSetupWarn    = lipgloss.NewStyle().Foreground(ThemeByName("").Yellow)
+	styleSetupHint    = lipgloss.NewStyle().Foreground(ThemeByName("").Muted)
+	styleSummaryKey   = lipgloss.NewStyle().Foreground(ThemeByName("").Muted)
+	styleSummaryVal   = lipgloss.NewStyle().Foreground(ThemeByName("").Accent).Bold(true)
 )
 
 // ── Model ────────────────────────────────────────────────────────────────────
