@@ -9,12 +9,33 @@ import (
 	"strings"
 )
 
+type AgentProfile struct {
+	Name    string `json:"name"`
+	Command string `json:"command"`
+}
+
 type Config struct {
-	AgentCommand    string `json:"agent_command"`
-	RepoRoot        string `json:"repo_root"`
-	LeftPanelWidth  int    `json:"left_panel_width,omitempty"`  // 0 = default 38
-	Theme           string `json:"theme,omitempty"`             // "", "github-dark", "nord", "catppuccin", "light"
-	IdleTimeoutSecs int    `json:"idle_timeout_secs,omitempty"` // 0 = disabled
+	AgentCommand    string         `json:"agent_command"`    // legacy, kept for compat
+	Agents          []AgentProfile `json:"agents,omitempty"` // new
+	RepoRoot        string         `json:"repo_root"`
+	LeftPanelWidth  int            `json:"left_panel_width,omitempty"`  // 0 = default 38
+	Theme           string         `json:"theme,omitempty"`             // "", "github-dark", "nord", "catppuccin", "light"
+	IdleTimeoutSecs int            `json:"idle_timeout_secs,omitempty"` // 0 = disabled
+}
+
+// ResolvedAgents returns the list of agent profiles to use.
+// If the new Agents field is set it is returned as-is; otherwise the legacy
+// AgentCommand field is wrapped in a single-element slice (defaulting to
+// "claude" when both are empty).
+func (c *Config) ResolvedAgents() []AgentProfile {
+	if len(c.Agents) > 0 {
+		return c.Agents
+	}
+	cmd := c.AgentCommand
+	if cmd == "" {
+		cmd = "claude"
+	}
+	return []AgentProfile{{Name: cmd, Command: cmd}}
 }
 
 func DefaultConfigPath() string {

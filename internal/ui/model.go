@@ -119,6 +119,7 @@ const (
 	modeConfirmDelete
 	modePendingDelete
 	modeSetupAgent
+	modeAgentPicker
 	modeHelp
 )
 
@@ -147,6 +148,9 @@ type Model struct {
 	inputHint string
 
 	newBranch string // temp storage during two-step new-worktree flow
+
+	pickerCursor int
+	pickerAgents []config.AgentProfile
 
 	statusMsg string
 	program   *tea.Program
@@ -302,7 +306,14 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.enterInput(modeNewWorktree, "New branch name (e.g. feat/my-feature): ", "")
 			return m, nil
 		case "r":
-			return m, m.runAgent()
+			agents := m.cfg.ResolvedAgents()
+			if len(agents) == 1 {
+				return m, m.runAgentWithProfile(agents[0])
+			}
+			m.pickerAgents = agents
+			m.pickerCursor = 0
+			m.mode = modeAgentPicker
+			return m, nil
 		case "x":
 			return m, m.killAgent()
 		case "d":
@@ -407,6 +418,24 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.statusMsg = "delete cancelled"
 		}
 
+	case modeAgentPicker:
+		switch msg.String() {
+		case "j", "down":
+			if m.pickerCursor < len(m.pickerAgents)-1 {
+				m.pickerCursor++
+			}
+		case "k", "up":
+			if m.pickerCursor > 0 {
+				m.pickerCursor--
+			}
+		case "enter":
+			profile := m.pickerAgents[m.pickerCursor]
+			m.mode = modeNormal
+			return m, m.runAgentWithProfile(profile)
+		case "esc", "q":
+			m.mode = modeNormal
+		}
+
 	case modeHelp:
 		switch msg.String() {
 		case "esc", "q", "?":
@@ -455,7 +484,7 @@ func (m *Model) refreshWorktrees() tea.Cmd {
 	}
 }
 
-func (m *Model) runAgent() tea.Cmd {
+func (m *Model) runAgentWithProfile(profile config.AgentProfile) tea.Cmd {
 	if len(m.entries) == 0 {
 		return nil
 	}
@@ -472,7 +501,7 @@ func (m *Model) runAgent() tea.Cmd {
 			p.Send(agentChangedMsg{idx: idx})
 		}
 	}
-	if err := e.agent.Start(e.wt.Path, m.cfg.AgentCommand, e.wt.Branch, m.cfg.RepoRoot); err != nil {
+	if err := e.agent.Start(e.wt.Path, profile.Command, e.wt.Branch, m.cfg.RepoRoot); err != nil {
 		m.statusMsg = "failed to start agent: " + err.Error()
 		return nil
 	}
@@ -587,6 +616,10 @@ func (m *Model) View() string {
 
 	if m.mode == modeHelp {
 		return m.renderHelp()
+	}
+
+	if m.mode == modeAgentPicker {
+		return m.renderAgentPicker()
 	}
 
 	if m.mode == modeDiff {
@@ -849,6 +882,48 @@ func (m *Model) statusCounts() string {
 		return ""
 	}
 	return strings.Join(parts, m.st.muted.Render(" · "))
+}
+
+func (m *Model) renderAgentPicker() string {
+	w := 52
+	if m.width-8 < w {
+		w = m.width - 8
+	}
+
+	titleLine := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Render("Choose Agent")
+
+	var rows []string
+	for i, p := range m.pickerAgents {
+		block := m.st.normal.Render(p.Name)
+		if p.Command != p.Name {
+			block += "\n" + m.st.muted.Render(p.Command)
+		}
+		if i == m.pickerCursor {
+			block = m.st.selected.Width(w - 8).Render(block)
+		}
+		rows = append(rows, block)
+	}
+
+	list := strings.Join(rows, "\n")
+	footer := m.st.muted.Render("j/k navigate   enter select   esc cancel")
+
+	inner := lipgloss.NewStyle().Width(w - 4).Render(
+		lipgloss.JoinVertical(lipgloss.Left,
+			titleLine,
+			"",
+			list,
+			"",
+			footer,
+		),
+	)
+
+	card := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(m.theme.Border).
+		Padding(1, 2).
+		Render(inner)
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
 }
 
 func (m *Model) renderHelp() string {
