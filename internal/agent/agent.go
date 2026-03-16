@@ -108,7 +108,7 @@ func (a *Agent) Reconnect(workdir, branch, repoRoot string) bool {
 	if parts := strings.SplitN(deadStr, ",", 2); len(parts) == 2 {
 		if parts[0] == "1" {
 			var code int
-			fmt.Sscanf(parts[1], "%d", &code)
+			fmt.Sscanf(parts[1], "%d", &code) //nolint:errcheck
 			if code == 0 {
 				initialStatus = StatusDone
 			} else {
