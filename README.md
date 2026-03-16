@@ -23,11 +23,11 @@
 
 ![Canopy dashboard](assets/hero.gif)
 
-Each worktree gets a dedicated **tmux session** so Claude Code runs in a real terminal with full PTY support. Canopy is the view from above — monitor all your agents at a glance, attach to any one when you need to interact directly.
+Each worktree gets a dedicated **tmux session** so Claude Code runs in a real terminal with full PTY support. Canopy sits above all of them: monitor every agent at a glance and drop in when you need to.
 
 ## Why canopy?
 
-Managing 3–5 parallel AI agents across separate terminals is chaotic — you have no overview of what's running, you're constantly switching windows, and there's no signal for when an agent needs your input. Canopy is the persistent view above all of them: one place to see every agent's state, catch anything waiting for you, and drop in exactly when needed.
+Managing 3–5 parallel AI agents across separate terminals is chaotic. You have no overview of what's running, you're constantly switching windows, and there's no signal for when an agent needs your input. Canopy gives you one persistent view: see every agent's state, catch anything waiting for you, and drop in when needed.
 
 ## Demo
 
@@ -83,7 +83,7 @@ Config is saved to `~/.config/canopy/config.json`.
 | `a` | Attach to the live tmux session (full interactive Claude) |
 | `x` | Kill running agent |
 | `d` | View git diff for selected worktree |
-| `D` | Delete worktree — confirm with `y`, then 5-second undo window |
+| `D` | Delete worktree (confirm with `y`, then 5-second undo window) |
 | `u` / `esc` | Cancel a pending delete during the countdown |
 | `i` | Send input to agent when it's waiting |
 | `R` | Refresh worktree list |
@@ -104,11 +104,11 @@ Press `a` to drop into the agent's tmux session and interact with Claude directl
 |------|-------|---------|
 | `○` | idle | No agent running |
 | `●` | running | Agent active |
-| `⚠` | waiting | Agent needs your input — press `i` or `a` |
+| `⚠` | waiting | Agent needs your input, press `i` or `a` |
 | `✓` | done | Agent finished cleanly |
 | `✗` | error | Agent exited with error |
 
-When an agent transitions to **waiting**, canopy marks it with a yellow `●` badge in the list and emits a terminal bell — so you notice even when working in another window. The badge clears when you navigate to that worktree.
+When an agent transitions to **waiting**, canopy marks it with a yellow `●` badge in the list and emits a terminal bell, so you notice even when working in another window. The badge clears when you navigate to that worktree.
 
 The status bar shows a live summary of agent counts (e.g. `1 running · 2 waiting`) on the right side.
 
@@ -122,7 +122,7 @@ When you press `r`, canopy creates a detached tmux session named `canopy_<repo-h
 
 Session names include a short hash of the repo root, so branches with the same name across different repos never collide.
 
-Agents keep running after you quit canopy — they're just tmux sessions. You can reattach at any time with `tmux attach -t <session-name>` or by reopening canopy and pressing `a`.
+Agents keep running after you quit canopy. They're just tmux sessions. You can reattach at any time with `tmux attach -t <session-name>` or by reopening canopy and pressing `a`.
 
 ## Config
 
@@ -148,9 +148,9 @@ Agents keep running after you quit canopy — they're just tmux sessions. You ca
 
 | Name | Description |
 |------|-------------|
-| `github-dark` | Default — GitHub dark palette |
-| `nord` | Nord palette — cool blues and greens |
-| `catppuccin` | Catppuccin Mocha — pastel dark theme |
+| `github-dark` | Default, GitHub dark palette |
+| `nord` | Nord palette, cool blues and greens |
+| `catppuccin` | Catppuccin Mocha, pastel dark theme |
 | `light` | Light terminal palette |
 
 ### Soft delete
@@ -159,7 +159,7 @@ Pressing `D` on a worktree asks for confirmation. After pressing `y`, canopy sta
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) — contributions, bug reports, and feature requests are welcome.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Contributions, bug reports, and feature requests are welcome.
 
 ## Roadmap
 
@@ -171,4 +171,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) — contributions, bug reports, and featu
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT, see [LICENSE](LICENSE)
