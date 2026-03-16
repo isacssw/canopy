@@ -17,9 +17,10 @@ import (
 type setupStep int
 
 const (
-	stepWelcome  setupStep = iota // logo + tagline, press any key
-	stepAgent                     // configure agent command
-	stepComplete                  // saved, show what's next
+	stepWelcome   setupStep = iota // logo + tagline, press any key
+	stepAgent                      // configure agent command
+	stepAgentName                  // name for the agent profile
+	stepComplete                   // saved, show what's next
 )
 
 // ── Messages ─────────────────────────────────────────────────────────────────
@@ -60,6 +61,8 @@ type SetupModel struct {
 	agentChecked      bool
 	agentCheckPending bool
 	lastCheckedVal    string
+	nameInput         textinput.Model
+	pendingAgentCmd   string
 	result            *config.Config
 }
 
@@ -69,9 +72,14 @@ func NewSetupModel() *SetupModel {
 	ti.Prompt = "> "
 	ti.CharLimit = 80
 
+	ni := textinput.New()
+	ni.Prompt = "> "
+	ni.CharLimit = 40
+
 	return &SetupModel{
 		step:       stepWelcome,
 		agentInput: ti,
+		nameInput:  ni,
 	}
 }
 
@@ -120,6 +128,11 @@ func (m *SetupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.agentInput, cmd = m.agentInput.Update(msg)
 		return m, cmd
 	}
+	if m.step == stepAgentName {
+		var cmd tea.Cmd
+		m.nameInput, cmd = m.nameInput.Update(msg)
+		return m, cmd
+	}
 
 	return m, nil
 }
@@ -150,7 +163,11 @@ func (m *SetupModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if val == "" {
 				val = "claude"
 			}
-			return m, m.saveConfigCmd(val)
+			m.pendingAgentCmd = val
+			defaultName := strings.Fields(val)[0]
+			m.nameInput.SetValue(defaultName)
+			m.step = stepAgentName
+			return m, m.nameInput.Focus()
 		default:
 			var cmd tea.Cmd
 			m.agentInput, cmd = m.agentInput.Update(msg)
@@ -161,6 +178,23 @@ func (m *SetupModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.agentCheckPending = true
 				return m, tea.Batch(cmd, m.checkPathCmd(newVal))
 			}
+			return m, cmd
+		}
+
+	case stepAgentName:
+		switch msg.String() {
+		case "esc":
+			m.step = stepAgent
+			return m, m.agentInput.Focus()
+		case "enter":
+			name := strings.TrimSpace(m.nameInput.Value())
+			if name == "" {
+				name = strings.Fields(m.pendingAgentCmd)[0]
+			}
+			return m, m.saveConfigCmd(name, m.pendingAgentCmd)
+		default:
+			var cmd tea.Cmd
+			m.nameInput, cmd = m.nameInput.Update(msg)
 			return m, cmd
 		}
 
@@ -182,9 +216,11 @@ func (m *SetupModel) checkPathCmd(command string) tea.Cmd {
 	}
 }
 
-func (m *SetupModel) saveConfigCmd(agentCmd string) tea.Cmd {
+func (m *SetupModel) saveConfigCmd(name, agentCmd string) tea.Cmd {
 	return func() tea.Msg {
-		cfg := &config.Config{AgentCommand: agentCmd}
+		cfg := &config.Config{
+			Agents: []config.AgentProfile{{Name: name, Command: agentCmd}},
+		}
 		if err := config.Save(cfg); err != nil {
 			return configSavedMsg{err: err}
 		}
@@ -210,6 +246,8 @@ func (m *SetupModel) View() string {
 		inner = m.viewWelcome(cardW)
 	case stepAgent:
 		inner = m.viewAgent()
+	case stepAgentName:
+		inner = m.viewAgentName()
 	case stepComplete:
 		inner = m.viewComplete()
 	}
@@ -233,7 +271,7 @@ func (m *SetupModel) viewWelcome(_ int) string {
 }
 
 func (m *SetupModel) viewAgent() string {
-	step := styleSetupHint.Render("step 1 / 2")
+	step := styleSetupHint.Render("step 1 / 3")
 	heading := styleSetupHeading.Render("Agent Command")
 	desc := styleSetupHint.Render(
 		"Command used to launch an AI coding agent in each worktree.\n" +
@@ -263,16 +301,40 @@ func (m *SetupModel) viewAgent() string {
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
+func (m *SetupModel) viewAgentName() string {
+	step := styleSetupHint.Render("step 2 / 3")
+	heading := styleSetupHeading.Render("Agent Name")
+	desc := styleSetupHint.Render(
+		"A short label for this agent profile, shown in the picker.\n" +
+			"Press enter to accept the default.",
+	)
+	input := m.nameInput.View()
+	hint := styleSetupHint.Render("enter to continue  •  esc to go back")
+
+	return lipgloss.JoinVertical(lipgloss.Left,
+		step, "", heading, "", desc, "", input, "", hint,
+	)
+}
+
 func (m *SetupModel) viewComplete() string {
 	heading := styleSetupOk.Bold(true).Render("Setup complete!")
 	saved := styleSetupOk.Render(
 		fmt.Sprintf("  ✓ configuration saved to %s", config.DefaultConfigPath()),
 	)
 
-	summary := lipgloss.JoinHorizontal(lipgloss.Top,
-		styleSummaryKey.Render("  agent  "),
-		styleSummaryVal.Render(m.result.AgentCommand),
+	profile := m.result.ResolvedAgents()[0]
+	summary := lipgloss.JoinVertical(lipgloss.Left,
+		lipgloss.JoinHorizontal(lipgloss.Top,
+			styleSummaryKey.Render("  name     "),
+			styleSummaryVal.Render(profile.Name),
+		),
+		lipgloss.JoinHorizontal(lipgloss.Top,
+			styleSummaryKey.Render("  command  "),
+			styleSummaryVal.Render(profile.Command),
+		),
 	)
+
+	tip := styleSetupHint.Render("tip: add more agents in ~/.config/canopy/config.json")
 
 	whatsNext := lipgloss.JoinVertical(lipgloss.Left,
 		styleSetupHeading.Render("what's next"),
@@ -290,6 +352,8 @@ func (m *SetupModel) viewComplete() string {
 		saved,
 		"",
 		summary,
+		"",
+		tip,
 		"",
 		whatsNext,
 		"",

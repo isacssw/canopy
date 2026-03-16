@@ -23,7 +23,7 @@
 
 ![Canopy dashboard](assets/hero.gif)
 
-Each worktree gets a dedicated **tmux session** so Claude Code runs in a real terminal with full PTY support. Canopy sits above all of them: monitor every agent at a glance and drop in when you need to.
+Each worktree gets a dedicated **tmux session** so your agent runs in a real terminal with full PTY support. Canopy sits above all of them: monitor every agent at a glance and drop in when you need to.
 
 ## Why canopy?
 
@@ -38,7 +38,7 @@ Managing 3–5 parallel AI agents across separate terminals is chaotic. You have
 ## Requirements
 
 - [tmux](https://github.com/tmux/tmux) (any modern version)
-- [Claude Code](https://claude.ai/code) (`claude` on your PATH)
+- An AI coding agent on your PATH (e.g. [Claude Code](https://claude.ai/code), [Codex](https://github.com/openai/codex), [Aider](https://aider.chat))
 - A git repository
 
 ## Install
@@ -64,7 +64,7 @@ Run from anywhere inside your git repo:
 canopy
 ```
 
-First run will prompt for your agent command (default: `claude`).
+First run will open a short setup wizard to configure your agent command and give it a name.
 
 ```bash
 canopy --help      # show keybinds and usage
@@ -79,8 +79,8 @@ Config is saved to `~/.config/canopy/config.json`.
 |-----|--------|
 | `↑/↓` or `j/k` | Navigate worktrees |
 | `n` | Create new worktree (prompts for branch + base) |
-| `r` | Run agent in selected worktree |
-| `a` | Attach to the live tmux session (full interactive Claude) |
+| `r` | Run agent in selected worktree (shows picker if multiple agents are configured) |
+| `a` | Attach to the live tmux session (full interactive agent) |
 | `x` | Kill running agent |
 | `d` | View git diff for selected worktree |
 | `D` | Delete worktree (confirm with `y`, then 5-second undo window) |
@@ -96,7 +96,7 @@ Click any worktree in the left panel to select it. Use the scroll wheel to scrol
 
 ### Attaching to an agent
 
-Press `a` to drop into the agent's tmux session and interact with Claude directly. Canopy suspends while you're attached. Press `Ctrl+b d` to detach and return to canopy.
+Press `a` to drop into the agent's tmux session and interact with it directly. Canopy suspends while you're attached. Press `Ctrl+b d` to detach and return to canopy.
 
 ## Agent states
 
@@ -114,7 +114,7 @@ The status bar shows a live summary of agent counts (e.g. `1 running · 2 waitin
 
 ### Idle timeout
 
-With `idle_timeout_secs` set, any agent that has produced no new output for that many seconds is automatically promoted from **running** to **waiting**. This is a useful fallback for agents that don't emit Claude Code's standard input-prompt patterns (e.g. custom wrappers or other AI tools). Set to `0` (the default) to disable.
+With `idle_timeout_secs` set, any agent that has produced no new output for that many seconds is automatically promoted from **running** to **waiting**. This is a useful fallback for agents that don't emit standard input-prompt patterns. Set to `0` (the default) to disable.
 
 ## How it works
 
@@ -130,16 +130,23 @@ Agents keep running after you quit canopy. They're just tmux sessions. You can r
 
 ```json
 {
-  "agent_command": "claude",
+  "agents": [
+    { "name": "claude", "command": "claude" },
+    { "name": "claude-yolo", "command": "claude --dangerously-skip-permissions" },
+    { "name": "codex", "command": "codex" }
+  ],
   "left_panel_width": 38,
   "theme": "github-dark",
   "idle_timeout_secs": 0
 }
 ```
 
+With a single agent configured, pressing `r` starts it immediately. With two or more, a picker appears so you can choose which profile to run.
+
 | Field | Default | Description |
 |-------|---------|-------------|
-| `agent_command` | `"claude"` | Command used to launch the agent. Accepts any executable or wrapper script, e.g. `claude --dangerously-skip-permissions`. |
+| `agents` | — | List of agent profiles. Each entry has a `name` (label shown in the picker) and a `command` (executable + flags). |
+| `agent_command` | — | **Legacy.** Single agent command, used when `agents` is not set. Existing configs continue to work without any changes. |
 | `left_panel_width` | `38` | Width of the worktree list panel in columns. Minimum `20`. Omit to use the default. |
 | `theme` | `"github-dark"` | UI colour theme. Options: `"github-dark"`, `"nord"`, `"catppuccin"`, `"light"`. Omit or leave empty for the default. |
 | `idle_timeout_secs` | `0` | Seconds of no new agent output before status is promoted from **running** to **waiting**. `0` disables the timeout. Useful for non-Claude agents that don't emit standard input-prompt patterns. |
