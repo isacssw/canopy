@@ -98,13 +98,35 @@ func (a *Agent) Reconnect(workdir, branch, repoRoot string) bool {
 	if err := exec.Command("tmux", "has-session", "-t", name).Run(); err != nil {
 		return false
 	}
+	// Query pane state before taking the lock (name is a local var, no shared state)
+	deadOut, _ := exec.Command(
+		"tmux", "display-message", "-t", name, "-p", "#{pane_dead},#{pane_dead_status}",
+	).Output()
+	deadStr := strings.TrimSpace(string(deadOut))
+
+	initialStatus := StatusRunning
+	if parts := strings.SplitN(deadStr, ",", 2); len(parts) == 2 {
+		if parts[0] == "1" {
+			var code int
+			fmt.Sscanf(parts[1], "%d", &code) //nolint:errcheck
+			if code == 0 {
+				initialStatus = StatusDone
+			} else {
+				initialStatus = StatusError
+			}
+		}
+	}
+
 	a.mu.Lock()
 	a.sessionName = name
-	a.status = StatusRunning
+	a.status = initialStatus
 	a.stopPoll = make(chan struct{})
 	stop := a.stopPoll
 	a.mu.Unlock()
-	go a.pollLoop(stop)
+
+	if initialStatus == StatusRunning {
+		go a.pollLoop(stop)
+	}
 	return true
 }
 
@@ -166,6 +188,7 @@ func (a *Agent) Start(workdir, command, branch, repoRoot string) error {
 	a.sessionName = name
 	a.status = StatusRunning
 	a.snapshot = ""
+	a.lastSnapshotChange = time.Time{}
 	a.stopPoll = make(chan struct{})
 	go a.pollLoop(a.stopPoll)
 
