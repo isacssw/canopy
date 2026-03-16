@@ -21,25 +21,7 @@
 - [Roadmap](#roadmap)
 - [License](#license)
 
-```
-┌──────────────────────────────┬─────────────────────────────────────┐
-│  worktrees                   │  agent output  ← feat/auth-flow     │
-│                              │                                     │
-│  ● feat/auth-flow            │  ✻ Thinking...                      │
-│    main ← feat/auth-flow     │  ⎯ Writing AuthProvider.tsx         │
-│    running                   │  ✔ Done. 3 files changed.           │
-│                              │                                     │
-│  ⚠ feat/onboarding-ui ●      │                                     │
-│    main ← feat/onboarding-ui │                                     │
-│    waiting                   │                                     │
-│                              │                                     │
-│  ✓ fix/email-capture         │                                     │
-│    main ← fix/email-capture  │                                     │
-│    done                      │                                     │
-├──────────────────────────────┴─────────────────────────────────────┤
-│ ? help  n new  r run  a attach  x kill  d diff  D delete  R refresh│  1 running · 1 waiting
-└────────────────────────────────────────────────────────────────────┘
-```
+![Canopy dashboard](assets/hero.gif)
 
 Each worktree gets a dedicated **tmux session** so Claude Code runs in a real terminal with full PTY support. Canopy is the view from above — monitor all your agents at a glance, attach to any one when you need to interact directly.
 
@@ -48,10 +30,6 @@ Each worktree gets a dedicated **tmux session** so Claude Code runs in a real te
 Managing 3–5 parallel AI agents across separate terminals is chaotic — you have no overview of what's running, you're constantly switching windows, and there's no signal for when an agent needs your input. Canopy is the persistent view above all of them: one place to see every agent's state, catch anything waiting for you, and drop in exactly when needed.
 
 ## Demo
-
-### Dashboard overview
-
-![Canopy dashboard](assets/hero.gif)
 
 ### Creating a worktree
 
