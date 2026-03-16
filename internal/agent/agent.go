@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 type Status int
@@ -290,13 +292,14 @@ func (a *Agent) tick() bool {
 		fmt.Sscanf(parts[1], "%d", &paneDeadStatus) //nolint
 	}
 
-	// Capture visible screen plus 200 lines of scrollback
+	// Capture visible screen plus 200 lines of scrollback (with ANSI color codes)
 	snapOut, _ := exec.Command(
-		"tmux", "capture-pane", "-t", name, "-p", "-S", "-200",
+		"tmux", "capture-pane", "-t", name, "-p", "-e", "-S", "-200",
 	).Output()
 	snapshot := trimSnapshot(string(snapOut))
 
-	newStatus := detectStatus(snapshot, paneDead, paneDeadStatus)
+	plainSnapshot := ansi.Strip(snapshot)
+	newStatus := detectStatus(plainSnapshot, paneDead, paneDeadStatus)
 
 	a.mu.Lock()
 	if a.sessionName != name {
