@@ -49,7 +49,13 @@ Managing 3–5 parallel AI agents across separate terminals is chaotic — you h
 
 ## Demo
 
-> 🎥 GIF coming soon — [watch the demo video](#)
+### Dashboard overview
+
+![Canopy dashboard](assets/hero.gif)
+
+### Creating a worktree
+
+![New worktree](assets/new-worktree.gif)
 
 ## Requirements
 
