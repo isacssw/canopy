@@ -102,25 +102,32 @@ func (a *Agent) Reconnect(workdir, branch, repoRoot string) bool {
 	}
 	// Query pane state before taking the lock (name is a local var, no shared state)
 	deadOut, _ := exec.Command(
-		"tmux", "display-message", "-t", name, "-p", "#{pane_dead},#{pane_dead_status}",
+		"tmux", "display-message", "-t", name, "-p",
+		"#{pane_dead},#{pane_dead_status},#{pane_activity}",
 	).Output()
 	deadStr := strings.TrimSpace(string(deadOut))
 
-	initialStatus := StatusRunning
-	if parts := strings.SplitN(deadStr, ",", 2); len(parts) == 2 {
-		if parts[0] == "1" {
-			var code int
-			fmt.Sscanf(parts[1], "%d", &code) //nolint:errcheck
-			if code == 0 {
-				initialStatus = StatusDone
-			} else {
-				initialStatus = StatusError
-			}
+	paneDead := false
+	paneDeadStatus := 0
+	var paneActivity time.Time
+	if parts := strings.SplitN(deadStr, ",", 3); len(parts) == 3 {
+		paneDead = parts[0] == "1"
+		fmt.Sscanf(parts[1], "%d", &paneDeadStatus) //nolint
+		var unixSecs int64
+		if n, _ := fmt.Sscanf(parts[2], "%d", &unixSecs); n == 1 && unixSecs > 0 {
+			paneActivity = time.Unix(unixSecs, 0)
 		}
 	}
 
+	snapOut, _ := exec.Command(
+		"tmux", "capture-pane", "-t", name, "-p", "-e", "-S", "-200",
+	).Output()
+	snapshot := trimSnapshot(string(snapOut))
+	initialStatus := detectStatus(ansi.Strip(snapshot), paneDead, paneDeadStatus, paneActivity)
+
 	a.mu.Lock()
 	a.sessionName = name
+	a.snapshot = snapshot
 	a.status = initialStatus
 	a.stopPoll = make(chan struct{})
 	stop := a.stopPoll
@@ -128,7 +135,7 @@ func (a *Agent) Reconnect(workdir, branch, repoRoot string) bool {
 
 	exec.Command("tmux", "set-option", "-t", name, "mouse", "on").Run() //nolint
 
-	if initialStatus == StatusRunning {
+	if initialStatus == StatusRunning || initialStatus == StatusWaiting {
 		go a.pollLoop(stop)
 	}
 	return true
@@ -306,17 +313,23 @@ func (a *Agent) tick() bool {
 		return false
 	}
 
-	// Read pane_dead and exit status set by remain-on-exit
+	// Read pane_dead, exit status, and last activity timestamp set by remain-on-exit
 	deadOut, _ := exec.Command(
-		"tmux", "display-message", "-t", name, "-p", "#{pane_dead},#{pane_dead_status}",
+		"tmux", "display-message", "-t", name, "-p",
+		"#{pane_dead},#{pane_dead_status},#{pane_activity}",
 	).Output()
 	deadStr := strings.TrimSpace(string(deadOut))
 
 	paneDead := false
 	paneDeadStatus := 0
-	if parts := strings.SplitN(deadStr, ",", 2); len(parts) == 2 {
+	var paneActivity time.Time
+	if parts := strings.SplitN(deadStr, ",", 3); len(parts) == 3 {
 		paneDead = parts[0] == "1"
 		fmt.Sscanf(parts[1], "%d", &paneDeadStatus) //nolint
+		var unixSecs int64
+		if n, _ := fmt.Sscanf(parts[2], "%d", &unixSecs); n == 1 && unixSecs > 0 {
+			paneActivity = time.Unix(unixSecs, 0)
+		}
 	}
 
 	// Capture visible screen plus 200 lines of scrollback (with ANSI color codes)
@@ -326,7 +339,7 @@ func (a *Agent) tick() bool {
 	snapshot := trimSnapshot(string(snapOut))
 
 	plainSnapshot := ansi.Strip(snapshot)
-	newStatus := detectStatus(plainSnapshot, paneDead, paneDeadStatus)
+	newStatus := detectStatus(plainSnapshot, paneDead, paneDeadStatus, paneActivity)
 
 	a.mu.Lock()
 	if a.sessionName != name {
@@ -361,9 +374,10 @@ func (a *Agent) tick() bool {
 }
 
 // detectStatus infers agent state from the tmux pane snapshot.
-// Checks only the last 3 lines for Claude Code's specific input patterns
-// to avoid false positives from code content.
-func detectStatus(snapshot string, paneDead bool, paneDeadStatus int) Status {
+// Uses pane_activity for a fast path: if the pane received output in the last
+// 2 seconds the agent is actively generating, so skip pattern matching.
+// Only when the pane has been silent do we check last 3 lines for input prompts.
+func detectStatus(snapshot string, paneDead bool, paneDeadStatus int, paneActivity time.Time) Status {
 	if paneDead {
 		if paneDeadStatus == 0 {
 			return StatusDone
@@ -371,14 +385,23 @@ func detectStatus(snapshot string, paneDead bool, paneDeadStatus int) Status {
 		return StatusError
 	}
 
+	// Fast path: if the pane received output in the last 2 seconds,
+	// the agent is actively generating — skip all pattern matching.
+	// Uses tmux #{pane_activity} (Unix seconds), so resolution is 1s;
+	// 2s threshold gives margin for the 1s granularity.
+	if !paneActivity.IsZero() && time.Since(paneActivity) < 2*time.Second {
+		return StatusRunning
+	}
+
+	// Pane has been quiet — check last 3 lines for input prompts.
 	lines := strings.Split(snapshot, "\n")
 	tail := lines
 	if len(lines) > 3 {
 		tail = lines[len(lines)-3:]
 	}
 
-	for _, line := range tail {
-		if isClaudeWaiting(strings.TrimSpace(line)) {
+	for i, line := range tail {
+		if isWaitingLine(strings.TrimSpace(line), i == len(tail)-1) {
 			return StatusWaiting
 		}
 	}
@@ -386,9 +409,9 @@ func detectStatus(snapshot string, paneDead bool, paneDeadStatus int) Status {
 	return StatusRunning
 }
 
-// isClaudeWaiting detects Claude Code's specific input prompt patterns.
-// These appear at the bottom of the pane when Claude needs user input.
-func isClaudeWaiting(line string) bool {
+// isWaitingLine detects agent input prompt patterns.
+// isLast indicates whether this is the very last line of the tail window.
+func isWaitingLine(line string, isLast bool) bool {
 	if line == "" {
 		return false
 	}
@@ -410,8 +433,9 @@ func isClaudeWaiting(line string) bool {
 		return true
 	}
 
-	// Bare > input cursor (Claude Code's text input prompt line)
-	if line == ">" || strings.HasSuffix(line, " >") {
+	// Only match bare > on the very last line to avoid false positives
+	// from shell prompts or content elsewhere in the tail.
+	if isLast && line == ">" {
 		return true
 	}
 
