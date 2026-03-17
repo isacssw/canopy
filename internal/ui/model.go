@@ -235,7 +235,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case diffReadyMsg:
 		m.diffVP = viewport.New(m.width-4, m.height-6)
-		m.diffVP.SetContent(msg.content)
+		m.diffVP.SetContent(colorDiff(msg.content, m.theme))
 		m.mode = modeDiff
 		m.statusMsg = "esc to close diff"
 
