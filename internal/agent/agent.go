@@ -126,6 +126,8 @@ func (a *Agent) Reconnect(workdir, branch, repoRoot string) bool {
 	stop := a.stopPoll
 	a.mu.Unlock()
 
+	exec.Command("tmux", "set-option", "-t", name, "mouse", "on").Run() //nolint
+
 	if initialStatus == StatusRunning {
 		go a.pollLoop(stop)
 	}
@@ -176,7 +178,9 @@ func (a *Agent) Start(workdir, command, branch, repoRoot string) error {
 	}
 
 	// Keep pane alive after the process exits so we can read the exit status
-	exec.Command("tmux", "set-option", "-t", name, "remain-on-exit", "on").Run() //nolint
+	exec.Command("tmux", "set-option", "-t", name, "remain-on-exit", "on").Run()  //nolint
+	exec.Command("tmux", "set-option", "-t", name, "mouse", "on").Run()           //nolint
+	exec.Command("tmux", "set-option", "-t", name, "history-limit", "5000").Run() //nolint
 
 	parts := strings.Fields(command)
 	if len(parts) == 0 {
