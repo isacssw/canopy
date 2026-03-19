@@ -404,6 +404,18 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.pendingDelete = nil
 			m.mode = modeNormal
 			m.statusMsg = "delete cancelled"
+		case "up", "k":
+			if m.cursor > 0 {
+				m.cursor--
+				m.entries[m.cursor].unread = false
+				m.syncOutputViewport()
+			}
+		case "down", "j":
+			if m.cursor < len(m.entries)-1 {
+				m.cursor++
+				m.entries[m.cursor].unread = false
+				m.syncOutputViewport()
+			}
 		}
 
 	case modeAgentPicker:
@@ -548,7 +560,7 @@ func (m *Model) entryAtY(y int) int {
 }
 
 func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.mode != modeNormal {
+	if m.mode != modeNormal && m.mode != modePendingDelete {
 		return m, nil
 	}
 	leftW := m.leftPanelWidth()
