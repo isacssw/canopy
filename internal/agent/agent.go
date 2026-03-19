@@ -50,6 +50,23 @@ func CheckTmux() error {
 
 var sessionNameRe = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
+type agentFlavor int
+
+const (
+	agentFlavorUnknown agentFlavor = iota
+	agentFlavorClaude
+	agentFlavorCodex
+)
+
+var (
+	codexChoiceLineRe  = regexp.MustCompile(`^[›>]\s*\d+\.\s+`)
+	codexConfirmLineRe = regexp.MustCompile(`(?i)press enter to confirm or esc to`)
+	codexSubmitLineRe  = regexp.MustCompile(`(?i)\benter to submit\b.*\besc to (interrupt|cancel)\b`)
+	claudeChoiceLineRe = regexp.MustCompile(`^[❯›]\s+`)
+	claudeYesNoLineRe  = regexp.MustCompile(`(?i)\byes\b.*\b(no|always)\b`)
+	claudeYnPromptLine = regexp.MustCompile(`(?i)\b(y/n|y/N|Y/n|yes/no)\b`)
+)
+
 // sessionName derives a deterministic, tmux-safe session name.
 // A repo-root hash prefix prevents collisions across repos with the same branch name.
 func sessionName(repoRoot, branch, worktreePath string) string {
@@ -67,16 +84,19 @@ func sessionName(repoRoot, branch, worktreePath string) string {
 	return name
 }
 
-// Agent manages a Claude Code process via a dedicated tmux session.
+// Agent manages an AI coding process via a dedicated tmux session.
 type Agent struct {
 	mu                 sync.Mutex
 	sessionName        string
 	status             Status
+	flavor             agentFlavor
 	snapshot           string
 	OnChange           func()
 	stopPoll           chan struct{}
 	lastSnapshotChange time.Time
 	idleTimeoutSecs    int
+	pendingStatus      Status
+	pendingStatusCount int
 }
 
 // SetIdleTimeout configures the agent-agnostic idle timeout. When the tmux
@@ -102,12 +122,13 @@ func (a *Agent) Reconnect(workdir, branch, repoRoot string) bool {
 	}
 	// Query pane state before taking the lock (name is a local var, no shared state)
 	deadOut, _ := exec.Command(
-		"tmux", "display-message", "-t", name, "-p", "#{pane_dead},#{pane_dead_status}",
+		"tmux", "display-message", "-t", name, "-p", "#{pane_dead},#{pane_dead_status},#{pane_current_command}",
 	).Output()
 	deadStr := strings.TrimSpace(string(deadOut))
 
 	initialStatus := StatusRunning
-	if parts := strings.SplitN(deadStr, ",", 2); len(parts) == 2 {
+	flavor := agentFlavorUnknown
+	if parts := strings.SplitN(deadStr, ",", 3); len(parts) >= 2 {
 		if parts[0] == "1" {
 			var code int
 			fmt.Sscanf(parts[1], "%d", &code) //nolint:errcheck
@@ -117,12 +138,18 @@ func (a *Agent) Reconnect(workdir, branch, repoRoot string) bool {
 				initialStatus = StatusError
 			}
 		}
+		if len(parts) == 3 {
+			flavor = detectAgentFlavor(parts[2])
+		}
 	}
 
 	a.mu.Lock()
 	a.sessionName = name
 	a.status = initialStatus
+	a.flavor = flavor
 	a.stopPoll = make(chan struct{})
+	a.pendingStatus = StatusIdle
+	a.pendingStatusCount = 0
 	stop := a.stopPoll
 	a.mu.Unlock()
 
@@ -186,6 +213,7 @@ func (a *Agent) Start(workdir, command, branch, repoRoot string) error {
 	if len(parts) == 0 {
 		parts = []string{"claude"}
 	}
+	flavor := detectAgentFlavor(command)
 	if err := exec.Command("tmux", "send-keys", "-t", name, strings.Join(parts, " "), "Enter").Run(); err != nil {
 		exec.Command("tmux", "kill-session", "-t", name).Run() //nolint
 		return fmt.Errorf("tmux send-keys: %w", err)
@@ -193,9 +221,12 @@ func (a *Agent) Start(workdir, command, branch, repoRoot string) error {
 
 	a.sessionName = name
 	a.status = StatusRunning
+	a.flavor = flavor
 	a.snapshot = ""
 	a.lastSnapshotChange = time.Time{}
 	a.stopPoll = make(chan struct{})
+	a.pendingStatus = StatusIdle
+	a.pendingStatusCount = 0
 	go a.pollLoop(a.stopPoll)
 
 	return nil
@@ -229,6 +260,9 @@ func (a *Agent) Kill() {
 	a.mu.Lock()
 	a.status = StatusIdle
 	a.sessionName = ""
+	a.flavor = agentFlavorUnknown
+	a.pendingStatus = StatusIdle
+	a.pendingStatusCount = 0
 	cb := a.OnChange
 	a.mu.Unlock()
 
@@ -252,6 +286,9 @@ func (a *Agent) Reset() {
 	a.status = StatusIdle
 	a.snapshot = ""
 	a.sessionName = ""
+	a.flavor = agentFlavorUnknown
+	a.pendingStatus = StatusIdle
+	a.pendingStatusCount = 0
 	a.mu.Unlock()
 }
 
@@ -308,15 +345,19 @@ func (a *Agent) tick() bool {
 
 	// Read pane_dead and exit status set by remain-on-exit
 	deadOut, _ := exec.Command(
-		"tmux", "display-message", "-t", name, "-p", "#{pane_dead},#{pane_dead_status}",
+		"tmux", "display-message", "-t", name, "-p", "#{pane_dead},#{pane_dead_status},#{pane_current_command}",
 	).Output()
 	deadStr := strings.TrimSpace(string(deadOut))
 
 	paneDead := false
 	paneDeadStatus := 0
-	if parts := strings.SplitN(deadStr, ",", 2); len(parts) == 2 {
+	paneCurrentCommand := ""
+	if parts := strings.SplitN(deadStr, ",", 3); len(parts) >= 2 {
 		paneDead = parts[0] == "1"
 		fmt.Sscanf(parts[1], "%d", &paneDeadStatus) //nolint
+		if len(parts) == 3 {
+			paneCurrentCommand = parts[2]
+		}
 	}
 
 	// Capture visible screen plus 200 lines of scrollback (with ANSI color codes)
@@ -326,7 +367,6 @@ func (a *Agent) tick() bool {
 	snapshot := trimSnapshot(string(snapOut))
 
 	plainSnapshot := ansi.Strip(snapshot)
-	newStatus := detectStatus(plainSnapshot, paneDead, paneDeadStatus)
 
 	a.mu.Lock()
 	if a.sessionName != name {
@@ -334,6 +374,10 @@ func (a *Agent) tick() bool {
 		a.mu.Unlock()
 		return false
 	}
+	if flavor := detectAgentFlavor(paneCurrentCommand); flavor != agentFlavorUnknown {
+		a.flavor = flavor
+	}
+	newStatus := detectStatus(plainSnapshot, paneDead, paneDeadStatus, a.flavor)
 	if a.snapshot != snapshot {
 		a.lastSnapshotChange = time.Now()
 	}
@@ -343,6 +387,12 @@ func (a *Agent) tick() bool {
 		time.Since(a.lastSnapshotChange) >= time.Duration(a.idleTimeoutSecs)*time.Second {
 		newStatus = StatusWaiting
 	}
+	newStatus = stabilizeInteractiveStatus(
+		a.status,
+		newStatus,
+		&a.pendingStatus,
+		&a.pendingStatusCount,
+	)
 	changed := a.snapshot != snapshot || a.status != newStatus
 	a.snapshot = snapshot
 	a.status = newStatus
@@ -361,9 +411,7 @@ func (a *Agent) tick() bool {
 }
 
 // detectStatus infers agent state from the tmux pane snapshot.
-// Checks only the last 3 lines for Claude Code's specific input patterns
-// to avoid false positives from code content.
-func detectStatus(snapshot string, paneDead bool, paneDeadStatus int) Status {
+func detectStatus(snapshot string, paneDead bool, paneDeadStatus int, flavor agentFlavor) Status {
 	if paneDead {
 		if paneDeadStatus == 0 {
 			return StatusDone
@@ -371,14 +419,18 @@ func detectStatus(snapshot string, paneDead bool, paneDeadStatus int) Status {
 		return StatusError
 	}
 
-	lines := strings.Split(snapshot, "\n")
-	tail := lines
-	if len(lines) > 3 {
-		tail = lines[len(lines)-3:]
-	}
-
-	for _, line := range tail {
-		if isClaudeWaiting(strings.TrimSpace(line)) {
+	lines := snapshotTail(snapshot, 12)
+	switch flavor {
+	case agentFlavorClaude:
+		if hasClaudeWaitingPrompt(lines) {
+			return StatusWaiting
+		}
+	case agentFlavorCodex:
+		if hasCodexWaitingPrompt(lines) {
+			return StatusWaiting
+		}
+	default:
+		if hasClaudeWaitingPrompt(lines) || hasCodexWaitingPrompt(lines) {
 			return StatusWaiting
 		}
 	}
@@ -386,41 +438,148 @@ func detectStatus(snapshot string, paneDead bool, paneDeadStatus int) Status {
 	return StatusRunning
 }
 
+func snapshotTail(snapshot string, maxLines int) []string {
+	lines := strings.Split(snapshot, "\n")
+	if len(lines) <= maxLines {
+		return lines
+	}
+	return lines[len(lines)-maxLines:]
+}
+
+func hasCodexWaitingPrompt(lines []string) bool {
+	hasChoice := false
+	hasFooter := false
+	hasPromptHeading := false
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		l := strings.ToLower(line)
+		if strings.HasPrefix(l, "would you like to ") {
+			hasPromptHeading = true
+		}
+		if strings.HasPrefix(l, "• waiting") {
+			return true
+		}
+		if codexConfirmLineRe.MatchString(line) || codexSubmitLineRe.MatchString(line) {
+			hasFooter = true
+		}
+		if codexChoiceLineRe.MatchString(line) {
+			hasChoice = true
+		}
+	}
+
+	return hasPromptHeading || hasFooter || (hasChoice && hasFooter)
+}
+
 // isClaudeWaiting detects Claude Code's specific input prompt patterns.
 // These appear at the bottom of the pane when Claude needs user input.
-func isClaudeWaiting(line string) bool {
-	if line == "" {
-		return false
-	}
+func hasClaudeWaitingPrompt(lines []string) bool {
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
 
-	// Claude Code's ? prompt for confirmations
-	// e.g. "? Do you want to proceed?"
-	if strings.HasPrefix(line, "? ") {
-		return true
-	}
+		// Claude Code's ? prompt for confirmations
+		// e.g. "? Do you want to proceed?"
+		if strings.HasPrefix(line, "? ") {
+			return true
+		}
 
-	// ❯ marks the selected option in Claude Code's choice menus
-	// › is Claude Code's text input cursor at the bottom of the pane
-	if strings.Contains(line, "❯") || strings.Contains(line, "›") {
-		return true
-	}
+		// ❯/› marks selections or input cursor in Claude Code prompts.
+		if claudeChoiceLineRe.MatchString(line) {
+			return true
+		}
 
-	// Yes/No/Always option row rendered for tool-use confirmations
-	if strings.Contains(line, "Yes") && (strings.Contains(line, "No") || strings.Contains(line, "Always")) {
-		return true
-	}
+		// Yes/No/Always option rows rendered for tool-use confirmations.
+		if claudeYesNoLineRe.MatchString(line) || claudeYnPromptLine.MatchString(line) {
+			return true
+		}
 
-	// Bare > input cursor (Claude Code's text input prompt line)
-	if line == ">" || strings.HasSuffix(line, " >") {
-		return true
-	}
+		// Bare input cursor prompt.
+		if line == ">" {
+			return true
+		}
 
-	// Pager-style continue prompt
-	if strings.Contains(line, "Press Enter to continue") {
-		return true
+		// Pager-style continue prompt.
+		if strings.Contains(line, "Press Enter to continue") {
+			return true
+		}
 	}
 
 	return false
+}
+
+func stabilizeInteractiveStatus(current, detected Status, pending *Status, count *int) Status {
+	if current == detected {
+		*pending = StatusIdle
+		*count = 0
+		return detected
+	}
+	if !isInteractiveStatus(current) || !isInteractiveStatus(detected) {
+		*pending = StatusIdle
+		*count = 0
+		return detected
+	}
+
+	if *pending != detected {
+		*pending = detected
+		*count = 1
+		return current
+	}
+
+	*count++
+	if *count < 2 {
+		return current
+	}
+	*pending = StatusIdle
+	*count = 0
+	return detected
+}
+
+func isInteractiveStatus(s Status) bool {
+	return s == StatusRunning || s == StatusWaiting
+}
+
+func detectAgentFlavor(command string) agentFlavor {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return agentFlavorUnknown
+	}
+
+	fields := strings.Fields(command)
+	candidates := make([]string, 0, 2)
+	if len(fields) > 0 {
+		candidates = append(candidates, fields[0])
+	}
+	if len(fields) > 1 && (strings.EqualFold(fields[0], "npx") || strings.EqualFold(fields[0], "pnpm")) {
+		candidates = append(candidates, fields[1])
+	}
+
+	for _, c := range candidates {
+		base := strings.ToLower(filepath.Base(c))
+		base = strings.TrimSuffix(base, ".exe")
+		switch base {
+		case "claude", "claude-code":
+			return agentFlavorClaude
+		case "codex", "codex-cli":
+			return agentFlavorCodex
+		}
+	}
+
+	lower := strings.ToLower(command)
+	switch {
+	case strings.Contains(lower, "claude"):
+		return agentFlavorClaude
+	case strings.Contains(lower, "codex"):
+		return agentFlavorCodex
+	default:
+		return agentFlavorUnknown
+	}
 }
 
 // trimSnapshot strips trailing whitespace per line and trailing blank lines.
