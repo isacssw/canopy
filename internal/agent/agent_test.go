@@ -62,6 +62,7 @@ func TestDetectAgentFlavor(t *testing.T) {
 	}{
 		{name: "claude", command: "claude", want: agentFlavorClaude},
 		{name: "codex", command: "codex", want: agentFlavorCodex},
+		{name: "quoted codex", command: `"codex" --model gpt-5.4`, want: agentFlavorCodex},
 		{name: "npx codex", command: "npx @openai/codex", want: agentFlavorCodex},
 		{name: "unknown", command: "aider", want: agentFlavorUnknown},
 	}

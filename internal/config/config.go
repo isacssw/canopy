@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/isacssw/canopy/internal/cmdline"
 )
 
 type AgentProfile struct {
@@ -28,14 +30,64 @@ type Config struct {
 // AgentCommand field is wrapped in a single-element slice (defaulting to
 // "claude" when both are empty).
 func (c *Config) ResolvedAgents() []AgentProfile {
-	if len(c.Agents) > 0 {
-		return c.Agents
+	if c == nil {
+		return []AgentProfile{{Name: "claude", Command: "claude"}}
 	}
-	cmd := c.AgentCommand
+
+	if agents := normalizeAgents(c.Agents); len(agents) > 0 {
+		return agents
+	}
+
+	cmd := strings.TrimSpace(c.AgentCommand)
 	if cmd == "" {
 		cmd = "claude"
 	}
-	return []AgentProfile{{Name: cmd, Command: cmd}}
+	return []AgentProfile{{Name: defaultProfileName(cmd), Command: cmd}}
+}
+
+// Normalize applies non-destructive defaults and trims invalid values.
+func (c *Config) Normalize() {
+	if c == nil {
+		return
+	}
+
+	c.AgentCommand = strings.TrimSpace(c.AgentCommand)
+	c.Theme = strings.TrimSpace(c.Theme)
+	if c.LeftPanelWidth < 0 {
+		c.LeftPanelWidth = 0
+	}
+	if c.IdleTimeoutSecs < 0 {
+		c.IdleTimeoutSecs = 0
+	}
+	c.Agents = normalizeAgents(c.Agents)
+}
+
+func normalizeAgents(in []AgentProfile) []AgentProfile {
+	if len(in) == 0 {
+		return nil
+	}
+
+	agents := make([]AgentProfile, 0, len(in))
+	for _, p := range in {
+		cmd := strings.TrimSpace(p.Command)
+		if cmd == "" {
+			continue
+		}
+		name := strings.TrimSpace(p.Name)
+		if name == "" {
+			name = defaultProfileName(cmd)
+		}
+		agents = append(agents, AgentProfile{Name: name, Command: cmd})
+	}
+	return agents
+}
+
+func defaultProfileName(command string) string {
+	name := cmdline.Executable(command)
+	if name == "" {
+		return command
+	}
+	return name
 }
 
 func DefaultConfigPath() string {
@@ -56,10 +108,17 @@ func Load() (*Config, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, err
 	}
+	cfg.Normalize()
 	return &cfg, nil
 }
 
 func Save(cfg *Config) error {
+	if cfg == nil {
+		return fmt.Errorf("config is nil")
+	}
+
+	cfg.Normalize()
+
 	path := DefaultConfigPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err

@@ -6,11 +6,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/isacssw/canopy/internal/cmdline"
 )
 
 type Status int
@@ -91,13 +94,19 @@ type Agent struct {
 	status             Status
 	flavor             agentFlavor
 	snapshot           string
-	OnChange           func()
+	onChange           func()
 	stopPoll           chan struct{}
 	lastSnapshotChange time.Time
 	idleTimeoutSecs    int
 	pendingStatus      Status
 	pendingStatusCount int
 }
+
+const (
+	pollIntervalFast   = 500 * time.Millisecond
+	pollIntervalMedium = time.Second
+	pollIntervalSlow   = 2 * time.Second
+)
 
 // SetIdleTimeout configures the agent-agnostic idle timeout. When the tmux
 // pane snapshot has not changed for secs seconds, a Running status is
@@ -112,26 +121,42 @@ func New() *Agent {
 	return &Agent{status: StatusIdle}
 }
 
+// SetOnChange registers a callback fired when status or snapshot changes.
+func (a *Agent) SetOnChange(cb func()) {
+	a.mu.Lock()
+	a.onChange = cb
+	a.mu.Unlock()
+}
+
+func tmuxRun(args ...string) error {
+	return exec.Command("tmux", args...).Run()
+}
+
+func tmuxOutput(args ...string) ([]byte, error) {
+	return exec.Command("tmux", args...).Output()
+}
+
+func tmuxCombinedOutput(args ...string) ([]byte, error) {
+	return exec.Command("tmux", args...).CombinedOutput()
+}
+
 // Reconnect checks whether a tmux session for this worktree already exists
 // (e.g. from a previous canopy instance) and resumes polling if so.
 // Returns true if an existing session was found.
 func (a *Agent) Reconnect(workdir, branch, repoRoot string) bool {
 	name := sessionName(repoRoot, branch, workdir)
-	if err := exec.Command("tmux", "has-session", "-t", name).Run(); err != nil {
+	if err := tmuxRun("has-session", "-t", name); err != nil {
 		return false
 	}
 	// Query pane state before taking the lock (name is a local var, no shared state)
-	deadOut, _ := exec.Command(
-		"tmux", "display-message", "-t", name, "-p", "#{pane_dead},#{pane_dead_status},#{pane_current_command}",
-	).Output()
+	deadOut, _ := tmuxOutput("display-message", "-t", name, "-p", "#{pane_dead},#{pane_dead_status},#{pane_current_command}")
 	deadStr := strings.TrimSpace(string(deadOut))
 
 	initialStatus := StatusRunning
 	flavor := agentFlavorUnknown
 	if parts := strings.SplitN(deadStr, ",", 3); len(parts) >= 2 {
 		if parts[0] == "1" {
-			var code int
-			fmt.Sscanf(parts[1], "%d", &code) //nolint:errcheck
+			code, _ := strconv.Atoi(parts[1])
 			if code == 0 {
 				initialStatus = StatusDone
 			} else {
@@ -153,7 +178,7 @@ func (a *Agent) Reconnect(workdir, branch, repoRoot string) bool {
 	stop := a.stopPoll
 	a.mu.Unlock()
 
-	exec.Command("tmux", "set-option", "-t", name, "mouse", "on").Run() //nolint
+	_ = tmuxRun("set-option", "-t", name, "mouse", "on")
 
 	if initialStatus == StatusRunning {
 		go a.pollLoop(stop)
@@ -193,30 +218,33 @@ func (a *Agent) Start(workdir, command, branch, repoRoot string) error {
 	name := sessionName(repoRoot, branch, workdir)
 
 	// Kill any stale orphan session from a previous crash
-	if err := exec.Command("tmux", "has-session", "-t", name).Run(); err == nil {
-		exec.Command("tmux", "kill-session", "-t", name).Run() //nolint
+	if err := tmuxRun("has-session", "-t", name); err == nil {
+		_ = tmuxRun("kill-session", "-t", name)
 	}
 
-	out, err := exec.Command(
-		"tmux", "new-session", "-d", "-s", name, "-c", workdir, "-x", "220", "-y", "50",
-	).CombinedOutput()
+	out, err := tmuxCombinedOutput("new-session", "-d", "-s", name, "-c", workdir, "-x", "220", "-y", "50")
 	if err != nil {
 		return fmt.Errorf("tmux new-session: %w — %s", err, strings.TrimSpace(string(out)))
 	}
 
 	// Keep pane alive after the process exits so we can read the exit status
-	exec.Command("tmux", "set-option", "-t", name, "remain-on-exit", "on").Run()  //nolint
-	exec.Command("tmux", "set-option", "-t", name, "mouse", "on").Run()           //nolint
-	exec.Command("tmux", "set-option", "-t", name, "history-limit", "5000").Run() //nolint
+	_ = tmuxRun("set-option", "-t", name, "remain-on-exit", "on")
+	_ = tmuxRun("set-option", "-t", name, "mouse", "on")
+	_ = tmuxRun("set-option", "-t", name, "history-limit", "5000")
 
-	parts := strings.Fields(command)
-	if len(parts) == 0 {
-		parts = []string{"claude"}
+	launchCmd := strings.TrimSpace(command)
+	if launchCmd == "" {
+		launchCmd = "claude"
 	}
-	flavor := detectAgentFlavor(command)
-	if err := exec.Command("tmux", "send-keys", "-t", name, strings.Join(parts, " "), "Enter").Run(); err != nil {
-		exec.Command("tmux", "kill-session", "-t", name).Run() //nolint
+
+	flavor := detectAgentFlavor(launchCmd)
+	if err := tmuxRun("send-keys", "-t", name, "-l", launchCmd); err != nil {
+		_ = tmuxRun("kill-session", "-t", name)
 		return fmt.Errorf("tmux send-keys: %w", err)
+	}
+	if err := tmuxRun("send-keys", "-t", name, "Enter"); err != nil {
+		_ = tmuxRun("kill-session", "-t", name)
+		return fmt.Errorf("tmux send-keys enter: %w", err)
 	}
 
 	a.sessionName = name
@@ -241,8 +269,8 @@ func (a *Agent) Send(text string) {
 		return
 	}
 	// -l sends literal characters, preventing tmux from interpreting key names
-	exec.Command("tmux", "send-keys", "-t", name, "-l", text).Run() //nolint
-	exec.Command("tmux", "send-keys", "-t", name, "Enter").Run()    //nolint
+	_ = tmuxRun("send-keys", "-t", name, "-l", text)
+	_ = tmuxRun("send-keys", "-t", name, "Enter")
 }
 
 // Kill terminates the tmux session and stops polling.
@@ -255,7 +283,7 @@ func (a *Agent) Kill() {
 	}
 
 	a.stopPolling()
-	exec.Command("tmux", "kill-session", "-t", name).Run() //nolint
+	_ = tmuxRun("kill-session", "-t", name)
 
 	a.mu.Lock()
 	a.status = StatusIdle
@@ -263,7 +291,7 @@ func (a *Agent) Kill() {
 	a.flavor = agentFlavorUnknown
 	a.pendingStatus = StatusIdle
 	a.pendingStatusCount = 0
-	cb := a.OnChange
+	cb := a.onChange
 	a.mu.Unlock()
 
 	if cb != nil {
@@ -279,7 +307,7 @@ func (a *Agent) Reset() {
 
 	a.stopPolling()
 	if name != "" {
-		exec.Command("tmux", "kill-session", "-t", name).Run() //nolint
+		_ = tmuxRun("kill-session", "-t", name)
 	}
 
 	a.mu.Lock()
@@ -304,49 +332,66 @@ func (a *Agent) stopPolling() {
 }
 
 func (a *Agent) pollLoop(stop <-chan struct{}) {
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
+	interval := pollIntervalFast
+	idleTicks := 0
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 	for {
 		select {
 		case <-stop:
 			return
-		case <-ticker.C:
-			if !a.tick() {
+		case <-timer.C:
+			keepPolling, changed, status := a.tick()
+			if !keepPolling {
 				return
 			}
+			if changed {
+				idleTicks = 0
+			} else {
+				idleTicks++
+			}
+
+			switch {
+			case status == StatusDone || status == StatusError:
+				interval = pollIntervalMedium
+			case idleTicks >= 20:
+				interval = pollIntervalSlow
+			case idleTicks >= 6:
+				interval = pollIntervalMedium
+			default:
+				interval = pollIntervalFast
+			}
+			timer.Reset(interval)
 		}
 	}
 }
 
-// tick captures pane state and updates status. Returns false when polling should stop.
-func (a *Agent) tick() bool {
+// tick captures pane state and updates status.
+// Returns keepPolling, changed, status.
+func (a *Agent) tick() (bool, bool, Status) {
 	a.mu.Lock()
 	name := a.sessionName
 	a.mu.Unlock()
 	if name == "" {
-		return false
+		return false, false, StatusIdle
 	}
 
-	// Check whether the session still exists
-	if err := exec.Command("tmux", "has-session", "-t", name).Run(); err != nil {
-		// Session disappeared without remain-on-exit — treat as done
+	// Read pane_dead and exit status set by remain-on-exit
+	deadOut, err := tmuxOutput("display-message", "-t", name, "-p", "#{pane_dead},#{pane_dead_status},#{pane_current_command}")
+	if err != nil {
+		// Session disappeared without remain-on-exit — treat as done.
 		a.mu.Lock()
 		if a.sessionName == name { // guard against concurrent Kill()
 			a.status = StatusDone
 			a.sessionName = ""
 		}
-		cb := a.OnChange
+		cb := a.onChange
 		a.mu.Unlock()
 		if cb != nil {
 			cb()
 		}
-		return false
+		return false, true, StatusDone
 	}
-
-	// Read pane_dead and exit status set by remain-on-exit
-	deadOut, _ := exec.Command(
-		"tmux", "display-message", "-t", name, "-p", "#{pane_dead},#{pane_dead_status},#{pane_current_command}",
-	).Output()
 	deadStr := strings.TrimSpace(string(deadOut))
 
 	paneDead := false
@@ -354,31 +399,34 @@ func (a *Agent) tick() bool {
 	paneCurrentCommand := ""
 	if parts := strings.SplitN(deadStr, ",", 3); len(parts) >= 2 {
 		paneDead = parts[0] == "1"
-		fmt.Sscanf(parts[1], "%d", &paneDeadStatus) //nolint
+		paneDeadStatus, _ = strconv.Atoi(parts[1])
 		if len(parts) == 3 {
 			paneCurrentCommand = parts[2]
 		}
 	}
 
-	// Capture visible screen plus 200 lines of scrollback (with ANSI color codes)
-	snapOut, _ := exec.Command(
-		"tmux", "capture-pane", "-t", name, "-p", "-e", "-S", "-200",
-	).Output()
-	snapshot := trimSnapshot(string(snapOut))
-
-	plainSnapshot := ansi.Strip(snapshot)
+	snapshot := ""
+	if !paneDead {
+		// Capture visible screen plus 200 lines of scrollback (with ANSI color codes)
+		snapOut, _ := tmuxOutput("capture-pane", "-t", name, "-p", "-e", "-S", "-200")
+		snapshot = trimSnapshot(string(snapOut))
+	}
 
 	a.mu.Lock()
 	if a.sessionName != name {
 		// Kill() was called while we were polling — don't overwrite its state
 		a.mu.Unlock()
-		return false
+		return false, false, StatusIdle
 	}
 	if flavor := detectAgentFlavor(paneCurrentCommand); flavor != agentFlavorUnknown {
 		a.flavor = flavor
 	}
-	newStatus := detectStatus(plainSnapshot, paneDead, paneDeadStatus, a.flavor)
-	if a.snapshot != snapshot {
+	newStatus := detectStatus("", paneDead, paneDeadStatus, a.flavor)
+	if !paneDead {
+		plainSnapshot := ansi.Strip(snapshot)
+		newStatus = detectStatus(plainSnapshot, false, 0, a.flavor)
+	}
+	if !paneDead && a.snapshot != snapshot {
 		a.lastSnapshotChange = time.Now()
 	}
 	if newStatus == StatusRunning &&
@@ -393,10 +441,13 @@ func (a *Agent) tick() bool {
 		&a.pendingStatus,
 		&a.pendingStatusCount,
 	)
-	changed := a.snapshot != snapshot || a.status != newStatus
-	a.snapshot = snapshot
+	changed := a.status != newStatus
+	if !paneDead {
+		changed = changed || a.snapshot != snapshot
+		a.snapshot = snapshot
+	}
 	a.status = newStatus
-	cb := a.OnChange
+	cb := a.onChange
 	a.mu.Unlock()
 
 	if changed && cb != nil {
@@ -405,9 +456,9 @@ func (a *Agent) tick() bool {
 
 	if newStatus == StatusDone || newStatus == StatusError {
 		a.stopPolling()
-		return false
+		return false, changed, newStatus
 	}
-	return true
+	return true, changed, newStatus
 }
 
 // detectStatus infers agent state from the tmux pane snapshot.
@@ -551,7 +602,7 @@ func detectAgentFlavor(command string) agentFlavor {
 		return agentFlavorUnknown
 	}
 
-	fields := strings.Fields(command)
+	fields := cmdline.Fields(command)
 	candidates := make([]string, 0, 2)
 	if len(fields) > 0 {
 		candidates = append(candidates, fields[0])

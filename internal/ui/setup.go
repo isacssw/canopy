@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/isacssw/canopy/internal/cmdline"
 	"github.com/isacssw/canopy/internal/config"
 )
 
@@ -164,7 +165,10 @@ func (m *SetupModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				val = "claude"
 			}
 			m.pendingAgentCmd = val
-			defaultName := strings.Fields(val)[0]
+			defaultName := cmdline.Executable(val)
+			if defaultName == "" {
+				defaultName = val
+			}
 			m.nameInput.SetValue(defaultName)
 			m.step = stepAgentName
 			return m, m.nameInput.Focus()
@@ -189,7 +193,10 @@ func (m *SetupModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "enter":
 			name := strings.TrimSpace(m.nameInput.Value())
 			if name == "" {
-				name = strings.Fields(m.pendingAgentCmd)[0]
+				name = cmdline.Executable(m.pendingAgentCmd)
+				if name == "" {
+					name = m.pendingAgentCmd
+				}
 			}
 			return m, m.saveConfigCmd(name, m.pendingAgentCmd)
 		default:
@@ -211,7 +218,11 @@ func (m *SetupModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *SetupModel) checkPathCmd(command string) tea.Cmd {
 	return func() tea.Msg {
-		_, err := exec.LookPath(command)
+		exe := cmdline.Executable(command)
+		if exe == "" {
+			return pathCheckMsg{command: command, found: false}
+		}
+		_, err := exec.LookPath(exe)
 		return pathCheckMsg{command: command, found: err == nil}
 	}
 }

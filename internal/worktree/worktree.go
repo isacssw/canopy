@@ -3,6 +3,7 @@ package worktree
 import (
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -15,17 +16,16 @@ type Worktree struct {
 
 // List returns all git worktrees for the given repo root.
 func List(repoRoot string) ([]Worktree, error) {
-	cmd := exec.Command("git", "worktree", "list", "--porcelain")
-	cmd.Dir = repoRoot
-	out, err := cmd.Output()
+	out, err := gitOutput(repoRoot, "worktree", "list", "--porcelain")
 	if err != nil {
 		return nil, fmt.Errorf("git worktree list: %w", err)
 	}
-	return parse(string(out)), nil
+	return parse(string(out), repoRoot), nil
 }
 
-func parse(raw string) []Worktree {
+func parse(raw, repoRoot string) []Worktree {
 	var result []Worktree
+	cleanRoot := filepath.Clean(repoRoot)
 	blocks := strings.Split(strings.TrimSpace(raw), "\n\n")
 	for _, block := range blocks {
 		lines := strings.Split(strings.TrimSpace(block), "\n")
@@ -37,15 +37,10 @@ func parse(raw string) []Worktree {
 				ref := strings.TrimPrefix(line, "branch ")
 				// refs/heads/feat/my-feature → feat/my-feature
 				wt.Branch = strings.TrimPrefix(ref, "refs/heads/")
-			} else if line == "bare" {
-				wt.IsMain = true
 			}
 		}
 		if wt.Path != "" {
-			// The main worktree is always listed first by git
-			if len(result) == 0 {
-				wt.IsMain = true
-			}
+			wt.IsMain = filepath.Clean(wt.Path) == cleanRoot
 			wt.BaseBranch = detectBase(wt.Branch)
 			result = append(result, wt)
 		}
@@ -69,9 +64,7 @@ func detectBase(branch string) string {
 
 // Create creates a new git worktree with a new branch.
 func Create(repoRoot, path, branch, baseBranch string) error {
-	cmd := exec.Command("git", "worktree", "add", "-b", branch, path, baseBranch)
-	cmd.Dir = repoRoot
-	out, err := cmd.CombinedOutput()
+	out, err := gitCombinedOutput(repoRoot, "worktree", "add", "-b", branch, path, baseBranch)
 	if err != nil {
 		return fmt.Errorf("git worktree add: %w\n%s", err, string(out))
 	}
@@ -80,25 +73,36 @@ func Create(repoRoot, path, branch, baseBranch string) error {
 
 // Delete removes a git worktree and its branch.
 func Delete(repoRoot, path, branch string) error {
-	cmd := exec.Command("git", "worktree", "remove", "--force", path)
-	cmd.Dir = repoRoot
-	out, err := cmd.CombinedOutput()
+	out, err := gitCombinedOutput(repoRoot, "worktree", "remove", "--force", path)
 	if err != nil {
 		return fmt.Errorf("git worktree remove: %w\n%s", err, string(out))
 	}
 	if branch != "" {
-		exec.Command("git", "-C", repoRoot, "branch", "-D", branch).Run() //nolint
+		delOut, delErr := gitCombinedOutput(repoRoot, "branch", "-D", branch)
+		if delErr != nil {
+			return fmt.Errorf("worktree removed but failed to delete branch %q: %w\n%s", branch, delErr, strings.TrimSpace(string(delOut)))
+		}
 	}
 	return nil
 }
 
 // Diff returns the git diff for the given worktree path.
 func Diff(path string) (string, error) {
-	cmd := exec.Command("git", "diff", "HEAD")
-	cmd.Dir = path
-	out, err := cmd.Output()
+	out, err := gitOutput(path, "diff", "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("git diff: %w", err)
 	}
 	return string(out), nil
+}
+
+func gitOutput(dir string, args ...string) ([]byte, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	return cmd.Output()
+}
+
+func gitCombinedOutput(dir string, args ...string) ([]byte, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	return cmd.CombinedOutput()
 }
