@@ -43,17 +43,19 @@ Managing 3–5 parallel AI agents across separate terminals is chaotic. You have
 
 ## Install
 
-**With Go (recommended):**
+**Quick install (Linux & macOS):**
 ```bash
-go install github.com/isacssw/canopy/cmd/canopy@latest
+curl -fsSL https://raw.githubusercontent.com/isacssw/canopy/main/install.sh | sh
 ```
 
-**From source:**
+**Homebrew:**
 ```bash
-git clone https://github.com/isacssw/canopy
-cd canopy
-go build -o canopy ./cmd/canopy
-mv canopy ~/.local/bin/   # or any directory on your PATH
+brew install isacssw/tap/canopy
+```
+
+**With Go:**
+```bash
+go install github.com/isacssw/canopy/cmd/canopy@latest
 ```
 
 ## Usage
