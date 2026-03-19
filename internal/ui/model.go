@@ -3,8 +3,6 @@ package ui
 import (
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -118,14 +116,13 @@ const (
 	modeDiff
 	modeConfirmDelete
 	modePendingDelete
-	modeSetupAgent
 	modeAgentPicker
 	modeHelp
 )
 
 // ── Messages ─────────────────────────────────────────────────────────────────
 
-type agentChangedMsg struct{ idx int }
+type agentChangedMsg struct{ wtPath string }
 type worktreesRefreshedMsg struct{ entries []entry }
 type errMsg struct{ err error }
 type diffReadyMsg struct{ content string }
@@ -144,8 +141,7 @@ type Model struct {
 	outputVP viewport.Model
 	diffVP   viewport.Model
 
-	input     textinput.Model
-	inputHint string
+	input textinput.Model
 
 	newBranch string // temp storage during two-step new-worktree flow
 
@@ -201,22 +197,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cursor >= len(m.entries) {
 			m.cursor = max(0, len(m.entries)-1)
 		}
-		// Wire OnChange for any reconnected agents so UI updates as they poll.
-		p := m.program
+		// Wire callbacks so UI updates as agents poll.
 		for idx := range m.entries {
-			if m.entries[idx].agent.SessionName() != "" {
-				idx := idx
-				m.entries[idx].agent.OnChange = func() {
-					if p != nil {
-						p.Send(agentChangedMsg{idx: idx})
-					}
-				}
-			}
+			m.bindAgentOnChange(m.entries[idx].wt.Path, m.entries[idx].agent)
 		}
 		m.syncOutputViewport()
 
 	case agentChangedMsg:
-		idx := msg.idx
+		idx := m.indexByPath(msg.wtPath)
 		if idx >= 0 && idx < len(m.entries) {
 			e := &m.entries[idx]
 			newStatus := e.agent.Status()
@@ -269,7 +257,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if m.mode == modeNewWorktree || m.mode == modeNewWorktreeBase ||
-		m.mode == modeSendInput || m.mode == modeSetupAgent {
+		m.mode == modeSendInput {
 		m.input, cmd = m.input.Update(msg)
 	}
 	return m, cmd
@@ -445,387 +433,18 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	if m.mode == modeNewWorktree || m.mode == modeNewWorktreeBase ||
-		m.mode == modeSendInput || m.mode == modeSetupAgent {
+		m.mode == modeSendInput {
 		m.input, cmd = m.input.Update(msg)
 	}
 	return m, cmd
 }
 
-// ── Commands ─────────────────────────────────────────────────────────────────
-
-func (m *Model) refreshWorktrees() tea.Cmd {
-	return func() tea.Msg {
-		wts, err := worktree.List(m.cfg.RepoRoot)
-		if err != nil {
-			return errMsg{err}
-		}
-		// Preserve existing agents, unread badges, and prevStatus by path
-		type entryState struct {
-			agent      *agent.Agent
-			unread     bool
-			prevStatus agent.Status
-		}
-		stateMap := map[string]entryState{}
-		for _, e := range m.entries {
-			stateMap[e.wt.Path] = entryState{e.agent, e.unread, e.prevStatus}
-		}
-		entries := make([]entry, 0, len(wts))
-		for _, wt := range wts {
-			st, ok := stateMap[wt.Path]
-			if !ok {
-				a := agent.New()
-				a.Reconnect(wt.Path, wt.Branch, m.cfg.RepoRoot)
-				a.SetIdleTimeout(m.cfg.IdleTimeoutSecs)
-				st = entryState{agent: a}
-			}
-			entries = append(entries, entry{wt: wt, agent: st.agent, unread: st.unread, prevStatus: st.prevStatus})
-		}
-		return worktreesRefreshedMsg{entries: entries}
-	}
-}
-
-func (m *Model) runAgentWithProfile(profile config.AgentProfile) tea.Cmd {
-	if len(m.entries) == 0 {
-		return nil
-	}
-	idx := m.cursor
-	e := &m.entries[idx]
-	if e.agent.Status() == agent.StatusRunning || e.agent.Status() == agent.StatusWaiting {
-		m.statusMsg = "agent already running — press x to kill"
-		return nil
-	}
-	e.agent.Reset()
-	p := m.program
-	e.agent.OnChange = func() {
-		if p != nil {
-			p.Send(agentChangedMsg{idx: idx})
-		}
-	}
-	if err := e.agent.Start(e.wt.Path, profile.Command, e.wt.Branch, m.cfg.RepoRoot); err != nil {
-		m.statusMsg = "failed to start agent: " + err.Error()
-		return nil
-	}
-	m.statusMsg = ""
-	// Return a cmd that immediately triggers a re-render by sending a change msg
-	return func() tea.Msg { return agentChangedMsg{idx: idx} }
-}
-
-func (m *Model) killAgent() tea.Cmd {
-	if len(m.entries) == 0 {
-		return nil
-	}
-	idx := m.cursor
-	e := &m.entries[idx]
-	m.statusMsg = "killing…"
-	return func() tea.Msg {
-		e.agent.Kill()
-		return agentChangedMsg{idx: idx}
-	}
-}
-
-func (m *Model) attachAgent() tea.Cmd {
-	e := m.entries[m.cursor]
-	name := e.agent.SessionName()
-	if name == "" {
-		m.statusMsg = "no active session — press r to start"
-		return nil
-	}
-	idx := m.cursor
-	return tea.ExecProcess(
-		exec.Command("tmux", "attach-session", "-t", name),
-		func(err error) tea.Msg {
-			if err != nil {
-				return errMsg{err}
-			}
-			return agentChangedMsg{idx: idx}
-		},
-	)
-}
-
-func (m *Model) openDiff() tea.Cmd {
-	if len(m.entries) == 0 {
-		return nil
-	}
-	wt := m.entries[m.cursor].wt
-	return func() tea.Msg {
-		diff, err := worktree.Diff(wt.Path)
-		if err != nil {
-			return errMsg{err}
-		}
-		if diff == "" {
-			diff = "(no changes)"
-		}
-		return diffReadyMsg{content: diff}
-	}
-}
-
-func (m *Model) createWorktree(branch, base string) tea.Cmd {
-	m.mode = modeNormal
-	m.statusMsg = fmt.Sprintf("creating worktree %q from %q…", branch, base)
-	return func() tea.Msg {
-		// Use a path alongside the repo root, named after the branch
-		safe := strings.ReplaceAll(branch, "/", "-")
-		path := filepath.Join(filepath.Dir(m.cfg.RepoRoot), safe)
-		if err := worktree.Create(m.cfg.RepoRoot, path, branch, base); err != nil {
-			return errMsg{err}
-		}
-		wts, err := worktree.List(m.cfg.RepoRoot)
-		if err != nil {
-			return errMsg{err}
-		}
-		agentMap := map[string]*agent.Agent{}
-		for _, e := range m.entries {
-			agentMap[e.wt.Path] = e.agent
-		}
-		entries := make([]entry, 0, len(wts))
-		for _, wt := range wts {
-			a, ok := agentMap[wt.Path]
-			if !ok {
-				a = agent.New()
-				a.SetIdleTimeout(m.cfg.IdleTimeoutSecs)
-			}
-			entries = append(entries, entry{wt: wt, agent: a})
-		}
-		return worktreesRefreshedMsg{entries: entries}
-	}
-}
-
-func (m *Model) executePendingDelete() tea.Cmd {
-	pd := m.pendingDelete
-	m.pendingDelete = nil
-	m.mode = modeNormal
-	m.statusMsg = ""
-	if pd == nil {
-		return nil
-	}
-	return func() tea.Msg {
-		pd.ag.Kill()
-		if err := worktree.Delete(m.cfg.RepoRoot, pd.wtPath, pd.branch); err != nil {
-			return errMsg{err}
-		}
-		return m.refreshWorktrees()()
-	}
-}
-
 // ── View ─────────────────────────────────────────────────────────────────────
-
-func (m *Model) View() string {
-	if m.width == 0 {
-		return "loading…"
-	}
-
-	if m.mode == modeHelp {
-		return m.renderHelp()
-	}
-
-	if m.mode == modeAgentPicker {
-		return m.renderAgentPicker()
-	}
-
-	if m.mode == modeDiff {
-		return m.renderDiff()
-	}
-
-	leftW := m.leftPanelWidth()
-	rightW := m.width - leftW - 3
-	innerH := m.height - 4 // leave room for status bar + border
-
-	left := m.renderWorktreePanel(leftW, innerH)
-	right := m.renderOutputPanel(rightW, innerH)
-
-	body := lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
-
-	status := m.renderStatusBar()
-
-	switch m.mode {
-	case modeNewWorktree:
-		return m.renderInputModal("New Worktree", "Branch name")
-	case modeNewWorktreeBase:
-		return m.renderInputModal("Base Branch", "Base branch")
-	case modeSendInput:
-		return m.renderInputModal("Send to Agent", "Message")
-	}
-
-	return lipgloss.JoinVertical(lipgloss.Left, body, status)
-}
-
-func (m *Model) renderWorktreePanel(w, h int) string {
-	title := m.st.panelTitle.Render("  worktrees")
-
-	var rows []string
-	for i, e := range m.entries {
-		icon := statusIcon(e.agent.Status())
-		iconS := m.statusStyle(e.agent.Status()).Render(icon)
-
-		branch := e.wt.Branch
-		if branch == "" {
-			branch = filepath.Base(e.wt.Path)
-		}
-
-		base := ""
-		if e.wt.BaseBranch != "" {
-			base = m.st.muted.Render("  " + e.wt.BaseBranch + " ← " + branch)
-		}
-
-		statusTxt := m.statusStyle(e.agent.Status()).Render(e.agent.Status().String())
-
-		badge := ""
-		if e.unread {
-			badge = " " + lipgloss.NewStyle().Foreground(m.theme.Yellow).Bold(true).Render("●")
-		}
-		line1 := fmt.Sprintf(" %s %s%s", iconS, m.st.normal.Render(branch), badge)
-		line2 := base
-		line3 := fmt.Sprintf("   %s", statusTxt)
-
-		if e.wt.IsMain {
-			line1 = fmt.Sprintf(" %s %s %s%s", iconS, m.st.normal.Render(branch), m.st.muted.Render("(main)"), badge)
-			line2 = ""
-		}
-
-		block := line1
-		if line2 != "" {
-			block += "\n" + line2
-		}
-		block += "\n" + line3
-
-		if i == m.cursor {
-			block = m.st.selected.Width(w - 4).Render(block)
-		} else {
-			block = lipgloss.NewStyle().Width(w - 4).Render(block)
-		}
-
-		rows = append(rows, block)
-		if i < len(m.entries)-1 {
-			rows = append(rows, m.st.muted.Render(strings.Repeat("─", w-4)))
-		}
-	}
-
-	if len(rows) == 0 {
-		rows = []string{m.st.muted.Render("  no worktrees found\n  press n to create one")}
-	}
-
-	content := strings.Join(rows, "\n")
-
-	panel := m.st.panelBorder.
-		Width(w).
-		Height(h).
-		Render(title + "\n" + content)
-
-	return panel
-}
-
-func (m *Model) renderOutputPanel(w, h int) string {
-	title := " agent output"
-	if len(m.entries) > 0 {
-		e := m.entries[m.cursor]
-		branch := e.wt.Branch
-		if branch == "" {
-			branch = filepath.Base(e.wt.Path)
-		}
-		title = fmt.Sprintf(" agent output  %s", m.st.muted.Render("← "+branch))
-	}
-
-	content := m.outputVP.View()
-
-	panel := m.st.panelBorder.
-		Width(w).
-		Height(h).
-		Render(m.st.panelTitle.Render(title) + "\n" + content)
-
-	return panel
-}
-
-func (m *Model) renderDiff() string {
-	title := m.st.panelTitle.Render(" diff")
-	content := m.diffVP.View()
-	panel := m.st.panelBorder.
-		Width(m.width - 2).
-		Height(m.height - 3).
-		Render(title + "\n" + content)
-	return lipgloss.JoinVertical(lipgloss.Left, panel, m.renderStatusBar())
-}
-
-func (m *Model) renderStatusBar() string {
-	if m.mode == modePendingDelete && m.pendingDelete != nil {
-		pd := m.pendingDelete
-		deleteMsg := lipgloss.NewStyle().Foreground(m.theme.Red).Render(
-			fmt.Sprintf("Deleting %q in %ds…  [u]ndo", pd.branch, pd.secsLeft),
-		)
-		return m.st.statusBar.Width(m.width).Render(" " + deleteMsg)
-	}
-
-	keys := []string{
-		m.key("?", "help"),
-		m.key("n", "new"),
-		m.key("r", "run"),
-		m.key("a", "attach"),
-		m.key("x", "kill"),
-		m.key("d", "diff"),
-		m.key("D", "delete"),
-		m.key("i", "send input"),
-		m.key("R", "refresh"),
-		m.key("q", "quit"),
-	}
-	left := strings.Join(keys, "  ")
-
-	var rightParts []string
-	if counts := m.statusCounts(); counts != "" {
-		rightParts = append(rightParts, counts)
-	}
-	if m.statusMsg != "" {
-		rightParts = append(rightParts, lipgloss.NewStyle().Foreground(m.theme.Yellow).Render(m.statusMsg))
-	}
-	right := strings.Join(rightParts, "   ")
-
-	contentWidth := m.width - 2 // PaddingLeft(1) + PaddingRight(1)
-	gap := contentWidth - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 2 {
-		gap = 2
-	}
-	bar := left + strings.Repeat(" ", gap) + right
-	return m.st.statusBar.Width(m.width).Render(bar)
-}
-
-func (m *Model) renderInputModal(title, hint string) string {
-	w := m.width - 8
-	if w > 56 {
-		w = 56
-	}
-
-	titleLine := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Render(title)
-	hintLine := m.st.muted.Render(hint)
-	inputLine := "> " + m.input.View()
-	keysLine := m.st.muted.Render("enter ↵ confirm   esc quit")
-
-	inner := lipgloss.NewStyle().Width(w - 4).Render(
-		lipgloss.JoinVertical(lipgloss.Left,
-			titleLine,
-			"",
-			hintLine,
-			inputLine,
-			"",
-			keysLine,
-		),
-	)
-
-	card := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(m.theme.Border).
-		Padding(1, 2).
-		Render(inner)
-
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
-}
-
-func (m *Model) key(k, label string) string {
-	return m.st.key.Render(k) + " " + m.st.muted.Render(label)
-}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 func (m *Model) enterInput(md mode, hint, defaultVal string) {
 	m.mode = md
-	m.inputHint = hint
 	m.input.Reset()
 	m.input.SetValue(defaultVal)
 	m.input.Focus()
@@ -851,6 +470,23 @@ func (m *Model) syncOutputViewport() {
 	}
 	m.outputVP.SetContent(snap)
 	m.outputVP.GotoBottom()
+}
+
+func (m *Model) bindAgentOnChange(wtPath string, ag *agent.Agent) {
+	ag.SetOnChange(func() {
+		if m.program != nil {
+			m.program.Send(agentChangedMsg{wtPath: wtPath})
+		}
+	})
+}
+
+func (m *Model) indexByPath(path string) int {
+	for i := range m.entries {
+		if m.entries[i].wt.Path == path {
+			return i
+		}
+	}
+	return -1
 }
 
 func (m *Model) leftPanelWidth() int {
@@ -882,101 +518,6 @@ func (m *Model) statusCounts() string {
 		return ""
 	}
 	return strings.Join(parts, m.st.muted.Render(" · "))
-}
-
-func (m *Model) renderAgentPicker() string {
-	w := 52
-	if m.width-8 < w {
-		w = m.width - 8
-	}
-
-	titleLine := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Render("Choose Agent")
-
-	var rows []string
-	for i, p := range m.pickerAgents {
-		block := m.st.normal.Render(p.Name)
-		if p.Command != p.Name {
-			block += "\n" + m.st.muted.Render(p.Command)
-		}
-		if i == m.pickerCursor {
-			block = m.st.selected.Width(w - 8).Render(block)
-		}
-		rows = append(rows, block)
-	}
-
-	list := strings.Join(rows, "\n")
-	footer := m.st.muted.Render("j/k navigate   enter select   esc cancel")
-
-	inner := lipgloss.NewStyle().Width(w - 4).Render(
-		lipgloss.JoinVertical(lipgloss.Left,
-			titleLine,
-			"",
-			list,
-			"",
-			footer,
-		),
-	)
-
-	card := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(m.theme.Border).
-		Padding(1, 2).
-		Render(inner)
-
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
-}
-
-func (m *Model) renderHelp() string {
-	w := 48
-	if m.width-8 < w {
-		w = m.width - 8
-	}
-
-	type binding struct{ key, desc string }
-	sections := []struct {
-		title    string
-		bindings []binding
-	}{
-		{"Navigation", []binding{
-			{"↑ / k", "move up"},
-			{"↓ / j", "move down"},
-		}},
-		{"Worktrees", []binding{
-			{"n", "new worktree"},
-			{"D", "delete worktree"},
-			{"R", "refresh list"},
-		}},
-		{"Agents", []binding{
-			{"r", "run agent"},
-			{"x", "kill agent"},
-			{"a", "attach to session"},
-			{"i", "send input"},
-		}},
-		{"View", []binding{
-			{"d", "view diff"},
-			{"?", "toggle help"},
-			{"q", "quit"},
-		}},
-	}
-
-	var lines []string
-	lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Render("Keybindings"), "")
-	for _, section := range sections {
-		lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Muted).Bold(true).Render(section.title))
-		for _, b := range section.bindings {
-			lines = append(lines, fmt.Sprintf("  %s  %s", m.st.key.Render(b.key), m.st.muted.Render(b.desc)))
-		}
-		lines = append(lines, "")
-	}
-	lines = append(lines, m.st.muted.Render("esc / q / ?  close"))
-
-	inner := lipgloss.NewStyle().Width(w - 4).Render(strings.Join(lines, "\n"))
-	card := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(m.theme.Border).
-		Padding(1, 2).
-		Render(inner)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
 }
 
 // entryAtY maps a terminal row (0-based) in the left panel to an entry index.
