@@ -125,7 +125,18 @@ const (
 type agentChangedMsg struct{ wtPath string }
 type worktreesRefreshedMsg struct{ entries []entry }
 type errMsg struct{ err error }
-type diffReadyMsg struct{ content string }
+type diffReadyMsg struct {
+	result worktree.DiffResult
+	branch string
+}
+
+type diffFocus int
+
+const (
+	diffFocusFiles diffFocus = iota
+	diffFocusPatch
+)
+
 type deleteCountdownMsg struct{ secsLeft int }
 
 // ── Model ────────────────────────────────────────────────────────────────────
@@ -139,7 +150,14 @@ type Model struct {
 	height  int
 
 	outputVP viewport.Model
-	diffVP   viewport.Model
+
+	// Diff view state
+	diffFiles      []worktree.DiffFile
+	diffCursor     int
+	diffFocus      diffFocus
+	diffBranch     string
+	diffFileVP     viewport.Model
+	diffFileScroll int // scroll offset for file list panel
 
 	input textinput.Model
 
@@ -222,10 +240,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMsg = "error: " + msg.err.Error()
 
 	case diffReadyMsg:
-		m.diffVP = viewport.New(m.width-4, m.height-6)
-		m.diffVP.SetContent(colorDiff(msg.content, m.theme))
+		m.diffFiles = msg.result.Files
+		m.diffCursor = 0
+		m.diffFocus = diffFocusFiles
+		m.diffBranch = msg.branch
+		m.diffFileScroll = 0
 		m.mode = modeDiff
-		m.statusMsg = "esc to close diff"
+		m.syncDiffViewport()
 
 	case deleteCountdownMsg:
 		if m.pendingDelete == nil {
@@ -250,11 +271,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Propagate to active sub-components
 	var cmd tea.Cmd
-	if m.mode == modeNormal || m.mode == modeDiff {
+	if m.mode == modeNormal {
 		m.outputVP, cmd = m.outputVP.Update(msg)
-		if m.mode == modeDiff {
-			m.diffVP, _ = m.diffVP.Update(msg)
-		}
+	} else if m.mode == modeDiff {
+		m.diffFileVP, cmd = m.diffFileVP.Update(msg)
 	}
 	if m.mode == modeNewWorktree || m.mode == modeNewWorktreeBase ||
 		m.mode == modeSendInput {
@@ -376,6 +396,42 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "esc", "q", "d":
 			m.mode = modeNormal
 			m.statusMsg = ""
+		case "tab":
+			if m.diffFocus == diffFocusFiles {
+				m.diffFocus = diffFocusPatch
+			} else {
+				m.diffFocus = diffFocusFiles
+			}
+		case "j", "down":
+			if m.diffFocus == diffFocusFiles {
+				if m.diffCursor < len(m.diffFiles)-1 {
+					m.diffCursor++
+					m.syncDiffViewport()
+				}
+			} else {
+				m.diffFileVP.ScrollDown(1)
+			}
+		case "k", "up":
+			if m.diffFocus == diffFocusFiles {
+				if m.diffCursor > 0 {
+					m.diffCursor--
+					m.syncDiffViewport()
+				}
+			} else {
+				m.diffFileVP.ScrollUp(1)
+			}
+		case "J":
+			m.diffFileVP.ScrollDown(3)
+		case "K":
+			m.diffFileVP.ScrollUp(3)
+		case "g":
+			m.diffFileVP.GotoTop()
+		case "G":
+			m.diffFileVP.GotoBottom()
+		case "enter":
+			if m.diffFocus == diffFocusFiles {
+				m.diffFocus = diffFocusPatch
+			}
 		}
 
 	case modeConfirmDelete:
@@ -468,6 +524,56 @@ func (m *Model) resizePanels() {
 	innerH := m.height - 6
 	m.outputVP = viewport.New(rightW, innerH)
 	m.syncOutputViewport()
+	if m.mode == modeDiff {
+		m.syncDiffViewport()
+	}
+}
+
+func (m *Model) syncDiffViewport() {
+	// Right panel dimensions: total width minus left file list panel minus gaps
+	leftW := m.diffFileListWidth()
+	rightW := m.width - leftW - 5 // borders + gap
+	innerH := m.height - 6        // borders + status bar + title
+	if rightW < 10 {
+		rightW = 10
+	}
+	if innerH < 1 {
+		innerH = 1
+	}
+
+	m.diffFileVP = viewport.New(rightW, innerH)
+
+	if len(m.diffFiles) == 0 {
+		m.diffFileVP.SetContent(m.st.muted.Render("(no changes)"))
+		return
+	}
+
+	if m.diffCursor >= len(m.diffFiles) {
+		m.diffCursor = len(m.diffFiles) - 1
+	}
+
+	f := m.diffFiles[m.diffCursor]
+	var content string
+	if f.IsBinary && f.Patch == "" {
+		content = m.st.muted.Render("Binary file changed")
+	} else if f.Patch == "" {
+		content = m.st.muted.Render("(no diff content)")
+	} else {
+		content = colorDiff(f.Patch, m.theme)
+	}
+	m.diffFileVP.SetContent(content)
+	m.diffFileVP.GotoTop()
+}
+
+func (m *Model) diffFileListWidth() int {
+	w := m.width * 2 / 5
+	if w < 30 {
+		w = 30
+	}
+	if w > 50 {
+		w = 50
+	}
+	return w
 }
 
 func (m *Model) syncOutputViewport() {
