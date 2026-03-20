@@ -132,13 +132,154 @@ func (m *Model) renderOutputPanel(w, h int) string {
 }
 
 func (m *Model) renderDiff() string {
-	title := m.st.panelTitle.Render(" diff")
-	content := m.diffVP.View()
-	panel := m.st.panelBorder.
-		Width(m.width - 2).
-		Height(m.height - 3).
+	leftW := m.diffFileListWidth()
+	rightW := m.width - leftW - 3
+	innerH := m.height - 4
+
+	left := m.renderDiffFileList(leftW, innerH)
+	right := m.renderDiffPatch(rightW, innerH)
+
+	body := lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
+	return lipgloss.JoinVertical(lipgloss.Left, body, m.renderDiffStatusBar())
+}
+
+func (m *Model) renderDiffFileList(w, h int) string {
+	totalAdded := 0
+	totalRemoved := 0
+	for _, f := range m.diffFiles {
+		totalAdded += f.Added
+		totalRemoved += f.Removed
+	}
+
+	headerText := fmt.Sprintf(" %d files", len(m.diffFiles))
+	stats := ""
+	if totalAdded > 0 || totalRemoved > 0 {
+		stats = fmt.Sprintf("  %s %s",
+			lipgloss.NewStyle().Foreground(m.theme.Green).Render(fmt.Sprintf("+%d", totalAdded)),
+			lipgloss.NewStyle().Foreground(m.theme.Red).Render(fmt.Sprintf("-%d", totalRemoved)),
+		)
+	}
+	title := m.st.panelTitle.Render(headerText) + stats
+
+	var rows []string
+	visibleH := h - 1 // minus title line
+
+	// Ensure cursor is visible within scroll window
+	if m.diffCursor < m.diffFileScroll {
+		m.diffFileScroll = m.diffCursor
+	}
+	if m.diffCursor >= m.diffFileScroll+visibleH {
+		m.diffFileScroll = m.diffCursor - visibleH + 1
+	}
+
+	for i, f := range m.diffFiles {
+		if i < m.diffFileScroll {
+			continue
+		}
+		if len(rows) >= visibleH {
+			break
+		}
+
+		icon := f.Status
+		var iconStyle lipgloss.Style
+		switch f.Status {
+		case "A":
+			iconStyle = lipgloss.NewStyle().Foreground(m.theme.Green)
+		case "D":
+			iconStyle = lipgloss.NewStyle().Foreground(m.theme.Red)
+		case "R":
+			iconStyle = lipgloss.NewStyle().Foreground(m.theme.Purple)
+		default:
+			iconStyle = lipgloss.NewStyle().Foreground(m.theme.Yellow)
+		}
+
+		name := f.Name
+		if f.Status == "R" && f.OldName != "" {
+			name = f.OldName + " -> " + f.Name
+		}
+
+		statStr := ""
+		if f.IsBinary {
+			statStr = m.st.muted.Render(" bin")
+		} else if f.Added > 0 || f.Removed > 0 {
+			statStr = " " +
+				lipgloss.NewStyle().Foreground(m.theme.Green).Render(fmt.Sprintf("+%d", f.Added)) + " " +
+				lipgloss.NewStyle().Foreground(m.theme.Red).Render(fmt.Sprintf("-%d", f.Removed))
+		}
+
+		line := fmt.Sprintf(" %s %s%s", iconStyle.Render(icon), m.st.normal.Render(name), statStr)
+
+		lineW := w - 4
+		if i == m.diffCursor {
+			line = m.st.selected.Width(lineW).Render(line)
+		} else {
+			line = lipgloss.NewStyle().Width(lineW).Render(line)
+		}
+		rows = append(rows, line)
+	}
+
+	if len(rows) == 0 {
+		rows = []string{m.st.muted.Render("  (no changes)")}
+	}
+
+	content := strings.Join(rows, "\n")
+
+	borderStyle := m.st.panelBorder
+	if m.diffFocus == diffFocusFiles {
+		borderStyle = borderStyle.BorderForeground(m.theme.Accent)
+	}
+
+	return borderStyle.
+		Width(w).
+		Height(h).
 		Render(title + "\n" + content)
-	return lipgloss.JoinVertical(lipgloss.Left, panel, m.renderStatusBar())
+}
+
+func (m *Model) renderDiffPatch(w, h int) string {
+	fileName := "(no file selected)"
+	scrollPct := ""
+	if len(m.diffFiles) > 0 && m.diffCursor < len(m.diffFiles) {
+		fileName = m.diffFiles[m.diffCursor].Name
+		pct := m.diffFileVP.ScrollPercent()
+		scrollPct = m.st.muted.Render(fmt.Sprintf(" %d%%", int(pct*100)))
+	}
+	title := m.st.panelTitle.Render(" "+fileName) + scrollPct
+
+	content := m.diffFileVP.View()
+
+	borderStyle := m.st.panelBorder
+	if m.diffFocus == diffFocusPatch {
+		borderStyle = borderStyle.BorderForeground(m.theme.Accent)
+	}
+
+	return borderStyle.
+		Width(w).
+		Height(h).
+		Render(title + "\n" + content)
+}
+
+func (m *Model) renderDiffStatusBar() string {
+	keys := []string{
+		m.key("tab", "switch panel"),
+		m.key("j/k", "navigate"),
+		m.key("J/K", "fast scroll"),
+		m.key("g/G", "top/bottom"),
+		m.key("esc", "close"),
+	}
+	left := strings.Join(keys, "  ")
+
+	branch := ""
+	if m.diffBranch != "" {
+		branch = m.st.muted.Render(m.diffBranch)
+	}
+
+	contentWidth := m.width - 2
+	gap := contentWidth - lipgloss.Width(left) - lipgloss.Width(branch)
+	if gap < 2 {
+		gap = 2
+	}
+	bar := left + strings.Repeat(" ", gap) + branch
+	return m.st.statusBar.Width(m.width).Render(bar)
 }
 
 func (m *Model) renderStatusBar() string {
@@ -289,6 +430,14 @@ func (m *Model) renderHelp() string {
 			{"d", "view diff"},
 			{"?", "toggle help"},
 			{"q", "quit"},
+		}},
+		{"Diff View", []binding{
+			{"tab", "switch panel"},
+			{"j / k", "navigate files / scroll"},
+			{"J / K", "fast scroll patch"},
+			{"g / G", "top / bottom of patch"},
+			{"enter", "focus patch"},
+			{"esc", "close diff"},
 		}},
 	}
 

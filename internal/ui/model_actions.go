@@ -109,14 +109,11 @@ func (m *Model) openDiff() tea.Cmd {
 	}
 	wt := m.entries[m.cursor].wt
 	return func() tea.Msg {
-		diff, err := worktree.Diff(wt.Path)
+		result, err := worktree.DiffParsed(wt.Path)
 		if err != nil {
 			return errMsg{err}
 		}
-		if diff == "" {
-			diff = "(no changes)"
-		}
-		return diffReadyMsg{content: diff}
+		return diffReadyMsg{result: result, branch: wt.Branch}
 	}
 }
 
