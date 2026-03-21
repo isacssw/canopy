@@ -2,8 +2,11 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -129,6 +132,63 @@ func (m *Model) createWorktree(branch, base string) tea.Cmd {
 		}
 		return m.refreshWorktrees()()
 	}
+}
+
+var hunkHeaderRe = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)`)
+
+// openInEditor opens the currently selected diff file in $EDITOR or nvim.
+// When running inside a Neovim terminal ($NVIM is set), it sends a remote
+// command to the parent nvim instance instead of launching a new process.
+func (m *Model) openInEditor() tea.Cmd {
+	if len(m.entries) == 0 || len(m.diffFiles) == 0 {
+		return nil
+	}
+
+	wt := m.entries[m.cursor].wt
+	df := m.diffFiles[m.diffCursor]
+	filePath := filepath.Join(wt.Path, df.Name)
+
+	// Extract line number from the first hunk header in the patch.
+	line := 1
+	for _, patchLine := range strings.Split(df.Patch, "\n") {
+		if matches := hunkHeaderRe.FindStringSubmatch(patchLine); len(matches) >= 2 {
+			if n, err := strconv.Atoi(matches[1]); err == nil {
+				line = n
+			}
+			break
+		}
+	}
+
+	nvimSocket := os.Getenv("NVIM")
+	if nvimSocket != "" {
+		// Running inside nvim's terminal — send command to parent nvim.
+		cmd := fmt.Sprintf(":edit +%d %s<CR>", line, filePath)
+		return tea.ExecProcess(
+			exec.Command("nvim", "--server", nvimSocket, "--remote-send", cmd),
+			func(err error) tea.Msg {
+				if err != nil {
+					return errMsg{fmt.Errorf("nvim remote: %w", err)}
+				}
+				return agentChangedMsg{wtPath: wt.Path}
+			},
+		)
+	}
+
+	// Fallback: launch $EDITOR (or nvim) in the foreground.
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "nvim"
+	}
+	lineArg := fmt.Sprintf("+%d", line)
+	return tea.ExecProcess(
+		exec.Command(editor, lineArg, filePath),
+		func(err error) tea.Msg {
+			if err != nil {
+				return errMsg{err}
+			}
+			return agentChangedMsg{wtPath: wt.Path}
+		},
+	)
 }
 
 func (m *Model) executePendingDelete() tea.Cmd {

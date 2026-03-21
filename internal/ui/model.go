@@ -432,6 +432,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.diffFocus == diffFocusFiles {
 				m.diffFocus = diffFocusPatch
 			}
+		case "e":
+			if len(m.diffFiles) > 0 {
+				return m, m.openInEditor()
+			}
 		}
 
 	case modeConfirmDelete:

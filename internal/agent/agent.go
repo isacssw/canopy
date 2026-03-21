@@ -70,9 +70,10 @@ var (
 	claudeYnPromptLine = regexp.MustCompile(`(?i)\b(y/n|y/N|Y/n|yes/no)\b`)
 )
 
-// sessionName derives a deterministic, tmux-safe session name.
+// SessionNameFor derives a deterministic, tmux-safe session name.
 // A repo-root hash prefix prevents collisions across repos with the same branch name.
-func sessionName(repoRoot, branch, worktreePath string) string {
+// Exported for use by the status subcommand and nvim plugin.
+func SessionNameFor(repoRoot, branch, worktreePath string) string {
 	h := sha1.Sum([]byte(repoRoot))
 	repoHash := fmt.Sprintf("%x", h[:4])
 	s := branch
@@ -144,7 +145,7 @@ func tmuxCombinedOutput(args ...string) ([]byte, error) {
 // (e.g. from a previous canopy instance) and resumes polling if so.
 // Returns true if an existing session was found.
 func (a *Agent) Reconnect(workdir, branch, repoRoot string) bool {
-	name := sessionName(repoRoot, branch, workdir)
+	name := SessionNameFor(repoRoot, branch, workdir)
 	if err := tmuxRun("has-session", "-t", name); err != nil {
 		return false
 	}
@@ -215,7 +216,7 @@ func (a *Agent) Start(workdir, command, branch, repoRoot string) error {
 		return nil
 	}
 
-	name := sessionName(repoRoot, branch, workdir)
+	name := SessionNameFor(repoRoot, branch, workdir)
 
 	// Kill any stale orphan session from a previous crash
 	if err := tmuxRun("has-session", "-t", name); err == nil {
@@ -644,4 +645,45 @@ func trimSnapshot(s string) string {
 		lines = lines[:len(lines)-1]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// ProbeSession checks whether a tmux session exists and determines its status
+// without instantiating a full Agent. Returns the status string and whether the
+// session is active. This is used by the `canopy status --json` subcommand.
+func ProbeSession(sessionName string) (status string, active bool) {
+	if err := tmuxRun("has-session", "-t", sessionName); err != nil {
+		return "idle", false
+	}
+
+	deadOut, err := tmuxOutput("display-message", "-t", sessionName, "-p", "#{pane_dead},#{pane_dead_status},#{pane_current_command}")
+	if err != nil {
+		return "idle", false
+	}
+	deadStr := strings.TrimSpace(string(deadOut))
+
+	paneDead := false
+	paneDeadStatus := 0
+	flavor := agentFlavorUnknown
+
+	if parts := strings.SplitN(deadStr, ",", 3); len(parts) >= 2 {
+		paneDead = parts[0] == "1"
+		paneDeadStatus, _ = strconv.Atoi(parts[1])
+		if len(parts) == 3 {
+			flavor = detectAgentFlavor(parts[2])
+		}
+	}
+
+	if paneDead {
+		if paneDeadStatus == 0 {
+			return "done", true
+		}
+		return "error", true
+	}
+
+	// Capture pane and check for waiting prompts.
+	snapOut, _ := tmuxOutput("capture-pane", "-t", sessionName, "-p", "-S", "-50")
+	snapshot := trimSnapshot(string(snapOut))
+	plainSnapshot := ansi.Strip(snapshot)
+	detected := detectStatus(plainSnapshot, false, 0, flavor)
+	return detected.String(), true
 }
