@@ -161,8 +161,8 @@ func (m *Model) openInEditor() tea.Cmd {
 
 	nvimSocket := os.Getenv("NVIM")
 	if nvimSocket != "" {
-		// Running inside nvim's terminal — send command to parent nvim.
-		cmd := fmt.Sprintf(":edit +%d %s<CR>", line, filePath)
+		// Running inside nvim's terminal — cd to the worktree, then open the file.
+		cmd := fmt.Sprintf(":cd %s | edit +%d %s<CR>", wt.Path, line, filePath)
 		return tea.ExecProcess(
 			exec.Command("nvim", "--server", nvimSocket, "--remote-send", cmd),
 			func(err error) tea.Msg {
