@@ -194,7 +194,7 @@ func (m *Model) openInEditor() tea.Cmd {
 func buildNvimRemoteOpenCommand(wtPath, filePath string, line int) string {
 	// Use :execute + fnameescape() so paths with spaces/special chars are safe.
 	return fmt.Sprintf(
-		"<C-\\><C-N>:execute 'cd ' . fnameescape(%q) | execute 'edit +%d ' . fnameescape(%q)<CR>",
+		"<C-\\><C-N>:close | execute 'cd ' . fnameescape(%q) | execute 'edit +%d ' . fnameescape(%q)<CR>",
 		wtPath,
 		line,
 		filePath,
