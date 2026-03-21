@@ -49,6 +49,28 @@ detached
 	}
 }
 
+func TestParseFallsBackToFirstEntryAsMain(t *testing.T) {
+	raw := `worktree /tmp/repo-main
+HEAD 1111111111111111111111111111111111111111
+branch refs/heads/main
+
+worktree /tmp/repo-feature
+HEAD 2222222222222222222222222222222222222222
+branch refs/heads/feat/abc
+`
+
+	got := parse(raw, "/tmp/non-canonical-worktree")
+	if len(got) != 2 {
+		t.Fatalf("expected 2 worktrees, got %d", len(got))
+	}
+	if !got[0].IsMain {
+		t.Fatalf("expected first worktree to be main when repo root does not match any entry")
+	}
+	if got[1].IsMain {
+		t.Fatalf("expected second worktree to be non-main")
+	}
+}
+
 func TestDetectBase(t *testing.T) {
 	tests := []struct {
 		branch string

@@ -131,10 +131,39 @@ func Save(cfg *Config) error {
 }
 
 func DetectRepoRoot() (string, error) {
+	// Prefer the main worktree path from porcelain output so the detected root
+	// stays stable no matter which linked worktree canopy is launched from.
+	if out, err := exec.Command("git", "worktree", "list", "--porcelain").Output(); err == nil {
+		if root := detectMainWorktreePath(string(out)); root != "" {
+			return root, nil
+		}
+	}
+
+	// Fallback for older git versions or unusual repo layouts.
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("not inside a git repository")
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+func detectMainWorktreePath(raw string) string {
+	for _, line := range strings.Split(raw, "\n") {
+		if !strings.HasPrefix(line, "worktree ") {
+			continue
+		}
+		path := strings.TrimSpace(strings.TrimPrefix(line, "worktree "))
+		if path == "" {
+			continue
+		}
+		path = filepath.Clean(path)
+		if !filepath.IsAbs(path) {
+			if abs, err := filepath.Abs(path); err == nil {
+				path = abs
+			}
+		}
+		return path
+	}
+	return ""
 }
