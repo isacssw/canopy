@@ -18,7 +18,6 @@
 - [How it works](#how-it-works)
 - [Config](#config)
 - [Contributing](#contributing)
-- [Roadmap](#roadmap)
 - [License](#license)
 
 ![Canopy dashboard](assets/hero.gif)
@@ -169,14 +168,6 @@ Pressing `D` on a worktree asks for confirmation. After pressing `y`, canopy sta
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Contributions, bug reports, and feature requests are welcome.
-
-## Roadmap
-
-- [ ] Output search / filter
-- [ ] Per-agent task label (shown in list)
-- [ ] AI summary of last agent run
-- [ ] Multi-repo support
-- [ ] Export session log
 
 ## License
 
