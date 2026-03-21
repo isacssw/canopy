@@ -161,8 +161,8 @@ func (m *Model) openInEditor() tea.Cmd {
 
 	nvimSocket := os.Getenv("NVIM")
 	if nvimSocket != "" {
-		// Running inside nvim's terminal — cd to the worktree, then open the file.
-		cmd := fmt.Sprintf(":cd %s | edit +%d %s<CR>", wt.Path, line, filePath)
+		// Running inside nvim's terminal — leave terminal mode, then open file.
+		cmd := buildNvimRemoteOpenCommand(wt.Path, filePath, line)
 		return tea.ExecProcess(
 			exec.Command("nvim", "--server", nvimSocket, "--remote-send", cmd),
 			func(err error) tea.Msg {
@@ -188,6 +188,16 @@ func (m *Model) openInEditor() tea.Cmd {
 			}
 			return agentChangedMsg{wtPath: wt.Path}
 		},
+	)
+}
+
+func buildNvimRemoteOpenCommand(wtPath, filePath string, line int) string {
+	// Use :execute + fnameescape() so paths with spaces/special chars are safe.
+	return fmt.Sprintf(
+		"<C-\\><C-N>:execute 'cd ' . fnameescape(%q) | execute 'edit +%d ' . fnameescape(%q)<CR>",
+		wtPath,
+		line,
+		filePath,
 	)
 }
 
