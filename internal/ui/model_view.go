@@ -264,6 +264,7 @@ func (m *Model) renderDiffStatusBar() string {
 		m.key("j/k", "navigate"),
 		m.key("J/K", "fast scroll"),
 		m.key("g/G", "top/bottom"),
+		m.key("e", "open file"),
 		m.key("esc", "close"),
 	}
 	left := strings.Join(keys, "  ")
@@ -436,6 +437,7 @@ func (m *Model) renderHelp() string {
 			{"j / k", "navigate files / scroll"},
 			{"J / K", "fast scroll patch"},
 			{"g / G", "top / bottom of patch"},
+			{"e", "open selected file"},
 			{"enter", "focus patch"},
 			{"esc", "close diff"},
 		}},
