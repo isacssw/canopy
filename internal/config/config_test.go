@@ -72,3 +72,25 @@ func TestNormalizeClampsValues(t *testing.T) {
 		t.Fatalf("Agents normalized incorrectly: %#v", cfg.Agents)
 	}
 }
+
+func TestDetectMainWorktreePath(t *testing.T) {
+	raw := `worktree /tmp/project-main
+HEAD 1111111111111111111111111111111111111111
+branch refs/heads/main
+
+worktree /tmp/project-feature
+HEAD 2222222222222222222222222222222222222222
+branch refs/heads/feat/something
+`
+
+	got := detectMainWorktreePath(raw)
+	if got != "/tmp/project-main" {
+		t.Fatalf("detectMainWorktreePath() = %q, want %q", got, "/tmp/project-main")
+	}
+}
+
+func TestDetectMainWorktreePathEmpty(t *testing.T) {
+	if got := detectMainWorktreePath("HEAD deadbeef"); got != "" {
+		t.Fatalf("detectMainWorktreePath() = %q, want empty", got)
+	}
+}

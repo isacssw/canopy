@@ -26,7 +26,6 @@ func List(repoRoot string) ([]Worktree, error) {
 
 func parse(raw, repoRoot string) []Worktree {
 	var result []Worktree
-	cleanRoot := filepath.Clean(repoRoot)
 	blocks := strings.Split(strings.TrimSpace(raw), "\n\n")
 	for _, block := range blocks {
 		lines := strings.Split(strings.TrimSpace(block), "\n")
@@ -41,11 +40,28 @@ func parse(raw, repoRoot string) []Worktree {
 			}
 		}
 		if wt.Path != "" {
-			wt.IsMain = filepath.Clean(wt.Path) == cleanRoot
 			wt.BaseBranch = detectBase(wt.Branch)
 			result = append(result, wt)
 		}
 	}
+
+	// Prefer an explicit path match. If repoRoot is not canonical (or missing),
+	// fall back to the first git worktree entry, which is the main worktree.
+	mainIdx := -1
+	cleanRoot := filepath.Clean(repoRoot)
+	for i := range result {
+		if filepath.Clean(result[i].Path) == cleanRoot {
+			mainIdx = i
+			break
+		}
+	}
+	if mainIdx == -1 && len(result) > 0 {
+		mainIdx = 0
+	}
+	if mainIdx >= 0 {
+		result[mainIdx].IsMain = true
+	}
+
 	return result
 }
 
