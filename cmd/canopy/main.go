@@ -8,6 +8,7 @@ import (
 
 	"github.com/isacssw/canopy/internal/agent"
 	"github.com/isacssw/canopy/internal/config"
+	"github.com/isacssw/canopy/internal/status"
 	"github.com/isacssw/canopy/internal/ui"
 )
 
@@ -19,10 +20,18 @@ func main() {
 		return
 	}
 
+	if len(os.Args) >= 2 && os.Args[1] == "status" {
+		runStatus()
+		return
+	}
+
 	if len(os.Args) == 2 && (os.Args[1] == "--help" || os.Args[1] == "-h") {
 		fmt.Println("canopy - manage Claude Code agents across git worktrees")
 		fmt.Println()
-		fmt.Println("Usage: canopy [--version] [--help]")
+		fmt.Println("Usage: canopy [--version] [--help] [status]")
+		fmt.Println()
+		fmt.Println("Subcommands:")
+		fmt.Println("  status     output worktree and agent status as JSON")
 		fmt.Println()
 		fmt.Println("Keybindings:")
 		fmt.Println("  Navigation")
@@ -40,8 +49,12 @@ func main() {
 		fmt.Println("    x        kill agent")
 		fmt.Println("    i        send input")
 		fmt.Println()
-		fmt.Println("  Other")
+		fmt.Println("  Diff view")
 		fmt.Println("    d        open diff view")
+		fmt.Println("    e        open file in $EDITOR (nvim-aware)")
+		fmt.Println()
+		fmt.Println("  Other")
+		fmt.Println("    ?        toggle help")
 		fmt.Println("    q        quit")
 		return
 	}
@@ -85,6 +98,25 @@ func main() {
 	model.SetProgram(p)
 
 	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runStatus() {
+	if err := agent.CheckTmux(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	root, err := config.DetectRepoRoot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "not in a git repo: %v\n", err)
+		os.Exit(1)
+	}
+
+	cfg := &config.Config{RepoRoot: root}
+	if err := status.Run(os.Stdout, cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
