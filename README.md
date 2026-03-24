@@ -172,7 +172,7 @@ Pressing `D` on a worktree asks for confirmation. After pressing `y`, canopy sta
 
 ### Neovim
 
-For Neovim users, see [nvim.canopy](https://github.com/isacssw/nvim.canopy) for setup instructions and integration.
+For Neovim users, see [canopy.nvim](https://github.com/isacssw/canopy.nvim) for setup instructions and integration.
 
 ## Contributing
 
