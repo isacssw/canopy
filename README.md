@@ -100,7 +100,7 @@ Click any worktree in the left panel to select it. Use the scroll wheel to scrol
 
 Press `a` to drop into the agent's tmux session and interact with it directly. Canopy suspends while you're attached. Press `Ctrl+b d` to detach and return to canopy.
 
-> **Nested tmux sessions:** If you're already running inside a tmux session, canopy opens a nested session. To detach from the inner (canopy) session, press `Ctrl+b` twice then `d` — the first `Ctrl+b` is consumed by your outer session, so you need a second one to reach the inner session.
+> **Nested tmux sessions:** If you're already running inside a tmux session, canopy opens a nested session. To detach from the inner (canopy) session, press `Ctrl+b` twice then `d`. The first `Ctrl+b` is consumed by your outer session, so you need a second one to reach the inner session.
 
 ## Agent states
 
@@ -172,7 +172,7 @@ Pressing `D` on a worktree asks for confirmation. After pressing `y`, canopy sta
 
 ### Neovim
 
-For Neovim users, see [nvim.canopy](https://github.com/isacssw/nvim.canopy) for setup instructions and integration.
+For Neovim users, see [canopy.nvim](https://github.com/isacssw/canopy.nvim) for setup instructions and integration.
 
 ## Contributing
 
