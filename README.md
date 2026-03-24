@@ -17,6 +17,7 @@
 - [Keybinds](#keybinds)
 - [How it works](#how-it-works)
 - [Config](#config)
+- [Editor Integration](#editor-integration)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -99,6 +100,8 @@ Click any worktree in the left panel to select it. Use the scroll wheel to scrol
 
 Press `a` to drop into the agent's tmux session and interact with it directly. Canopy suspends while you're attached. Press `Ctrl+b d` to detach and return to canopy.
 
+> **Nested tmux sessions:** If you're already running inside a tmux session, canopy opens a nested session. To detach from the inner (canopy) session, press `Ctrl+b` twice then `d` — the first `Ctrl+b` is consumed by your outer session, so you need a second one to reach the inner session.
+
 ## Agent states
 
 | Icon | State | Meaning |
@@ -164,6 +167,12 @@ With a single agent configured, pressing `r` starts it immediately. With two or 
 ### Soft delete
 
 Pressing `D` on a worktree asks for confirmation. After pressing `y`, canopy starts a 5-second countdown displayed in the status bar (`Deleting "branch" in 5s…  [u]ndo`). Press `u`, `esc`, or `n` at any point during the countdown to cancel. The delete only executes when the timer reaches zero.
+
+## Editor Integration
+
+### Neovim
+
+For Neovim users, see [nvim.canopy](https://github.com/isacssw/nvim.canopy) for setup instructions and integration.
 
 ## Contributing
 
