@@ -144,7 +144,7 @@ func tmuxCombinedOutput(args ...string) ([]byte, error) {
 // Reconnect checks whether a tmux session for this worktree already exists
 // (e.g. from a previous canopy instance) and resumes polling if so.
 // Returns true if an existing session was found.
-func (a *Agent) Reconnect(workdir, branch, repoRoot string) bool {
+func (a *Agent) Reconnect(workdir, branch, repoRoot, tmuxPrefix string) bool {
 	name := SessionNameFor(repoRoot, branch, workdir)
 	if err := tmuxRun("has-session", "-t", name); err != nil {
 		return false
@@ -180,6 +180,9 @@ func (a *Agent) Reconnect(workdir, branch, repoRoot string) bool {
 	a.mu.Unlock()
 
 	_ = tmuxRun("set-option", "-t", name, "mouse", "on")
+	if tmuxPrefix != "" {
+		_ = tmuxRun("set-option", "-t", name, "prefix", tmuxPrefix)
+	}
 
 	if initialStatus == StatusRunning {
 		go a.pollLoop(stop)
@@ -208,7 +211,7 @@ func (a *Agent) SessionName() string {
 }
 
 // Start creates a tmux session and launches the agent command inside it.
-func (a *Agent) Start(workdir, command, branch, repoRoot string) error {
+func (a *Agent) Start(workdir, command, branch, repoRoot, tmuxPrefix string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -232,6 +235,9 @@ func (a *Agent) Start(workdir, command, branch, repoRoot string) error {
 	_ = tmuxRun("set-option", "-t", name, "remain-on-exit", "on")
 	_ = tmuxRun("set-option", "-t", name, "mouse", "on")
 	_ = tmuxRun("set-option", "-t", name, "history-limit", "5000")
+	if tmuxPrefix != "" {
+		_ = tmuxRun("set-option", "-t", name, "prefix", tmuxPrefix)
+	}
 
 	launchCmd := strings.TrimSpace(command)
 	if launchCmd == "" {

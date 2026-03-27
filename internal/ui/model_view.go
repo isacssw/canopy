@@ -458,6 +458,11 @@ func (m *Model) renderHelp() string {
 		}
 		lines = append(lines, "")
 	}
+	if m.cfg.TmuxPrefix != "" {
+		lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Muted).Bold(true).Render("Tmux"))
+		lines = append(lines, fmt.Sprintf("  %s  %s", m.st.key.Render(m.cfg.TmuxPrefix), m.st.muted.Render("session prefix")))
+		lines = append(lines, "")
+	}
 	lines = append(lines, m.st.muted.Render("esc / q / ?  close"))
 
 	inner := lipgloss.NewStyle().Width(w - 4).Render(strings.Join(lines, "\n"))
