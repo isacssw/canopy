@@ -159,6 +159,8 @@ type Model struct {
 	diffFileVP     viewport.Model
 	diffFileScroll int // scroll offset for file list panel
 
+	worktreeScroll int // first visible entry index in worktree panel
+
 	input textinput.Model
 
 	newBranch string // temp storage during two-step new-worktree flow
@@ -650,21 +652,20 @@ func (m *Model) entryAtY(y int) int {
 	if row < 0 {
 		return -1
 	}
-	for i, e := range m.entries {
-		blockH := 2 // line1 + line3
-		if !e.wt.IsMain && e.wt.BaseBranch != "" {
-			blockH = 3 // line1 + line2 (base) + line3
+	first := true
+	for i := m.worktreeScroll; i < len(m.entries); i++ {
+		if !first {
+			row-- // separator line
+			if row < 0 {
+				return -1 // clicked on separator
+			}
 		}
+		first = false
+		blockH := m.entryLineHeight(i)
 		if row < blockH {
 			return i
 		}
 		row -= blockH
-		if i < len(m.entries)-1 {
-			row-- // separator line
-		}
-		if row < 0 {
-			return -1 // clicked on separator
-		}
 	}
 	return -1
 }
@@ -684,9 +685,21 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case tea.MouseButtonWheelUp:
-		m.outputVP.ScrollUp(3)
+		if msg.X < leftW+2 {
+			if m.worktreeScroll > 0 {
+				m.worktreeScroll--
+			}
+		} else {
+			m.outputVP.ScrollUp(3)
+		}
 	case tea.MouseButtonWheelDown:
-		m.outputVP.ScrollDown(3)
+		if msg.X < leftW+2 {
+			if m.worktreeScroll < len(m.entries)-1 {
+				m.worktreeScroll++
+			}
+		} else {
+			m.outputVP.ScrollDown(3)
+		}
 	}
 	return m, nil
 }
