@@ -159,10 +159,14 @@ func (m *Model) renderDiffFileList(w, h int) string {
 			lipgloss.NewStyle().Foreground(m.theme.Red).Render(fmt.Sprintf("-%d", totalRemoved)),
 		)
 	}
-	title := m.st.panelTitle.Render(headerText) + stats
-
 	var rows []string
 	visibleH := h - 1 // minus title line
+
+	scrollInfo := ""
+	if len(m.diffFiles) > visibleH {
+		scrollInfo = m.st.muted.Render(fmt.Sprintf("  [%d/%d]", m.diffCursor+1, len(m.diffFiles)))
+	}
+	title := m.st.panelTitle.Render(headerText) + stats + scrollInfo
 
 	// Ensure cursor is visible within scroll window
 	if m.diffCursor < m.diffFileScroll {
@@ -189,6 +193,8 @@ func (m *Model) renderDiffFileList(w, h int) string {
 			iconStyle = lipgloss.NewStyle().Foreground(m.theme.Red)
 		case "R":
 			iconStyle = lipgloss.NewStyle().Foreground(m.theme.Purple)
+		case "?":
+			iconStyle = lipgloss.NewStyle().Foreground(m.theme.Green)
 		default:
 			iconStyle = lipgloss.NewStyle().Foreground(m.theme.Yellow)
 		}

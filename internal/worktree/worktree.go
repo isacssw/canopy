@@ -1,7 +1,9 @@
 package worktree
 
 import (
+	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -116,7 +118,7 @@ func Diff(path string) (string, error) {
 type DiffFile struct {
 	Name     string // e.g. "internal/ui/model.go"
 	OldName  string // non-empty for renames
-	Status   string // "M", "A", "D", "R"
+	Status   string // "M", "A", "D", "R", "?"
 	Added    int
 	Removed  int
 	IsBinary bool
@@ -198,7 +200,52 @@ func DiffParsed(path string) (DiffResult, error) {
 		result.Files = append(result.Files, df)
 	}
 
+	// Include untracked files
+	untrackedOut, err := gitOutput(path, "ls-files", "--others", "--exclude-standard")
+	if err == nil {
+		for _, name := range strings.Split(strings.TrimSpace(string(untrackedOut)), "\n") {
+			if name == "" {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(path, name))
+			if err != nil {
+				continue
+			}
+			df := DiffFile{Name: name, Status: "?"}
+			if bytes.ContainsRune(data, 0) {
+				df.IsBinary = true
+				df.Patch = fmt.Sprintf("diff --git a/%s b/%s\nnew file\nBinary file %s", name, name, name)
+			} else {
+				content := string(data)
+				lines := strings.Split(content, "\n")
+				if len(lines) > 0 && lines[len(lines)-1] == "" {
+					lines = lines[:len(lines)-1]
+				}
+				df.Added = len(lines)
+				df.Patch = buildNewFilePatch(name, lines)
+			}
+			result.TotalAdded += df.Added
+			result.Files = append(result.Files, df)
+		}
+	}
+
 	return result, nil
+}
+
+// buildNewFilePatch creates a synthetic diff patch for an untracked file.
+func buildNewFilePatch(name string, lines []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "diff --git a/%s b/%s\n", name, name)
+	b.WriteString("new file\n")
+	b.WriteString("--- /dev/null\n")
+	fmt.Fprintf(&b, "+++ b/%s\n", name)
+	fmt.Fprintf(&b, "@@ -0,0 +1,%d @@\n", len(lines))
+	for _, l := range lines {
+		b.WriteByte('+')
+		b.WriteString(l)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // splitPatchByFile splits a full git diff into per-file chunks.
