@@ -47,11 +47,58 @@ func (m *Model) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, body, status)
 }
 
+// entryLineHeight returns the number of terminal lines an entry occupies
+// (excluding the separator line between entries).
+func (m *Model) entryLineHeight(i int) int {
+	e := m.entries[i]
+	if !e.wt.IsMain && e.wt.BaseBranch != "" {
+		return 3 // branch + base + status
+	}
+	return 2 // branch + status
+}
+
 func (m *Model) renderWorktreePanel(w, h int) string {
 	title := m.st.panelTitle.Render("  worktrees")
+	visibleH := h - 1 // subtract title line
+
+	// Clamp worktreeScroll so cursor is always visible.
+	if len(m.entries) > 0 {
+		// Scroll up if cursor is above the visible window.
+		if m.cursor < m.worktreeScroll {
+			m.worktreeScroll = m.cursor
+		}
+		// Scroll down if cursor is below the visible window.
+		for m.worktreeScroll < m.cursor {
+			lines := 0
+			for i := m.worktreeScroll; i <= m.cursor; i++ {
+				lines += m.entryLineHeight(i)
+				if i > m.worktreeScroll {
+					lines++ // separator above this entry
+				}
+			}
+			if lines <= visibleH {
+				break
+			}
+			m.worktreeScroll++
+		}
+	}
 
 	var rows []string
+	usedLines := 0
 	for i, e := range m.entries {
+		if i < m.worktreeScroll {
+			continue
+		}
+
+		blockH := m.entryLineHeight(i)
+		sep := 0
+		if len(rows) > 0 {
+			sep = 1 // separator line
+		}
+		if usedLines+sep+blockH > visibleH && len(rows) > 0 {
+			break
+		}
+
 		icon := statusIcon(e.agent.Status())
 		iconS := m.statusStyle(e.agent.Status()).Render(icon)
 
@@ -92,10 +139,12 @@ func (m *Model) renderWorktreePanel(w, h int) string {
 			block = lipgloss.NewStyle().Width(w - 4).Render(block)
 		}
 
-		rows = append(rows, block)
-		if i < len(m.entries)-1 {
+		if sep > 0 {
 			rows = append(rows, m.st.muted.Render(strings.Repeat("─", w-4)))
+			usedLines += sep
 		}
+		rows = append(rows, block)
+		usedLines += blockH
 	}
 
 	if len(rows) == 0 {
