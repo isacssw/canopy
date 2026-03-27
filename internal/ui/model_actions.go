@@ -39,7 +39,7 @@ func (m *Model) refreshWorktrees() tea.Cmd {
 			st, ok := stateMap[wt.Path]
 			if !ok {
 				a := agent.New()
-				a.Reconnect(wt.Path, wt.Branch, m.cfg.RepoRoot)
+				a.Reconnect(wt.Path, wt.Branch, m.cfg.RepoRoot, m.cfg.TmuxPrefix)
 				a.SetIdleTimeout(m.cfg.IdleTimeoutSecs)
 				st = entryState{agent: a}
 			}
@@ -63,7 +63,7 @@ func (m *Model) runAgentWithProfile(profile config.AgentProfile) tea.Cmd {
 
 	e.agent.Reset()
 	m.bindAgentOnChange(wtPath, e.agent)
-	if err := e.agent.Start(e.wt.Path, profile.Command, e.wt.Branch, m.cfg.RepoRoot); err != nil {
+	if err := e.agent.Start(e.wt.Path, profile.Command, e.wt.Branch, m.cfg.RepoRoot, m.cfg.TmuxPrefix); err != nil {
 		m.statusMsg = "failed to start agent: " + err.Error()
 		return nil
 	}

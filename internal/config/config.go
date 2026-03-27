@@ -23,6 +23,7 @@ type Config struct {
 	LeftPanelWidth  int            `json:"left_panel_width,omitempty"`  // 0 = default 38
 	Theme           string         `json:"theme,omitempty"`             // "", "github-dark", "nord", "catppuccin", "light"
 	IdleTimeoutSecs int            `json:"idle_timeout_secs,omitempty"` // 0 = disabled
+	TmuxPrefix      string         `json:"tmux_prefix,omitempty"`       // custom prefix key for canopy tmux sessions (e.g. "C-Space")
 }
 
 // ResolvedAgents returns the list of agent profiles to use.
@@ -59,6 +60,7 @@ func (c *Config) Normalize() {
 	if c.IdleTimeoutSecs < 0 {
 		c.IdleTimeoutSecs = 0
 	}
+	c.TmuxPrefix = strings.TrimSpace(c.TmuxPrefix)
 	c.Agents = normalizeAgents(c.Agents)
 }
 

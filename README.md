@@ -100,7 +100,7 @@ Click any worktree in the left panel to select it. Use the scroll wheel to scrol
 
 Press `a` to drop into the agent's tmux session and interact with it directly. Canopy suspends while you're attached. Press `Ctrl+b d` to detach and return to canopy.
 
-> **Nested tmux sessions:** If you're already running inside a tmux session, canopy opens a nested session. To detach from the inner (canopy) session, press `Ctrl+b` twice then `d`. The first `Ctrl+b` is consumed by your outer session, so you need a second one to reach the inner session.
+> **Nested tmux sessions:** If you're already running inside a tmux session, canopy opens a nested session. To detach from the inner (canopy) session, press `Ctrl+b` twice then `d`. The first `Ctrl+b` is consumed by your outer session, so you need a second one to reach the inner session. To avoid the double-prefix, set `"tmux_prefix": "C-Space"` (or any other key) in your config — canopy's sessions will use that prefix instead.
 
 ## Agent states
 
@@ -141,7 +141,8 @@ Agents keep running after you quit canopy. They're just tmux sessions. You can r
   ],
   "left_panel_width": 38,
   "theme": "github-dark",
-  "idle_timeout_secs": 0
+  "idle_timeout_secs": 0,
+  "tmux_prefix": "C-Space"
 }
 ```
 
@@ -154,6 +155,7 @@ With a single agent configured, pressing `r` starts it immediately. With two or 
 | `left_panel_width` | `38` | Width of the worktree list panel in columns. Minimum `20`. Omit to use the default. |
 | `theme` | `"github-dark"` | UI colour theme. Options: `"github-dark"`, `"nord"`, `"catppuccin"`, `"light"`. Omit or leave empty for the default. |
 | `idle_timeout_secs` | `0` | Seconds of no new agent output before status is promoted from **running** to **waiting**. `0` disables the timeout. Useful for non-Claude agents that don't emit standard input-prompt patterns. |
+| `tmux_prefix` | — | Custom prefix key for canopy's tmux sessions (e.g. `"C-Space"`, `"C-a"`). Avoids double-prefix when running inside an existing tmux. Omit to use tmux's default (`C-b`). |
 
 ### Themes
 
