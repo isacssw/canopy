@@ -94,9 +94,14 @@ func (m *Model) attachAgent() tea.Cmd {
 		m.statusMsg = "no active session — press r to start"
 		return nil
 	}
+	cmd, err := buildTmuxAttachCommand(name)
+	if err != nil {
+		m.statusMsg = "failed to attach: " + err.Error()
+		return nil
+	}
 	wtPath := e.wt.Path
 	return tea.ExecProcess(
-		exec.Command("tmux", "attach-session", "-t", name),
+		cmd,
 		func(err error) tea.Msg {
 			if err != nil {
 				return errMsg{err}
@@ -104,6 +109,44 @@ func (m *Model) attachAgent() tea.Cmd {
 			return agentChangedMsg{wtPath: wtPath}
 		},
 	)
+}
+
+var currentTmuxSocketPath = func() (string, error) {
+	out, err := exec.Command("tmux", "display-message", "-p", "#{socket_path}").Output()
+	if err != nil {
+		return "", fmt.Errorf("detect current tmux socket: %w", err)
+	}
+
+	socket := strings.TrimSpace(string(out))
+	if socket == "" {
+		return "", fmt.Errorf("detect current tmux socket: empty socket path")
+	}
+
+	return socket, nil
+}
+
+func buildTmuxAttachCommand(name string) (*exec.Cmd, error) {
+	if os.Getenv("TMUX") == "" {
+		return exec.Command("tmux", "attach-session", "-t", name), nil
+	}
+
+	socket, err := currentTmuxSocketPath()
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := exec.Command("tmux", "-S", socket, "attach-session", "-t", name)
+	env := os.Environ()
+	filtered := env[:0]
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "TMUX=") {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	cmd.Env = filtered
+
+	return cmd, nil
 }
 
 func (m *Model) openDiff() tea.Cmd {
