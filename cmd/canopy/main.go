@@ -11,6 +11,7 @@ import (
 	"github.com/isacssw/canopy/internal/config"
 	"github.com/isacssw/canopy/internal/status"
 	"github.com/isacssw/canopy/internal/ui"
+	"github.com/isacssw/canopy/internal/worktree"
 )
 
 var version = "dev"
@@ -101,6 +102,15 @@ func main() {
 	}
 	cfg.RepoRoot = root
 
+	if wt, ok := nestedAgentSession(root); ok {
+		branch := wt.Branch
+		if branch == "" {
+			branch = wt.Path
+		}
+		fmt.Fprintf(os.Stderr, "error: canopy is running inside the agent tmux session for %q; detach first or start canopy from another terminal\n", branch)
+		os.Exit(1)
+	}
+
 	model := ui.New(cfg)
 
 	p := tea.NewProgram(
@@ -147,4 +157,28 @@ func runSetup() (*config.Config, error) {
 		return nil, fmt.Errorf("setup cancelled")
 	}
 	return cfg, nil
+}
+
+func nestedAgentSession(repoRoot string) (worktree.Worktree, bool) {
+	current := agent.CurrentTmuxSessionName()
+	if current == "" {
+		return worktree.Worktree{}, false
+	}
+
+	wts, err := worktree.List(repoRoot)
+	if err != nil {
+		return worktree.Worktree{}, false
+	}
+
+	return matchingWorktreeForSession(repoRoot, current, wts)
+}
+
+func matchingWorktreeForSession(repoRoot, sessionName string, wts []worktree.Worktree) (worktree.Worktree, bool) {
+	for _, wt := range wts {
+		if agent.SessionNameFor(repoRoot, wt.Branch, wt.Path) == sessionName {
+			return wt, true
+		}
+	}
+
+	return worktree.Worktree{}, false
 }

@@ -3,6 +3,7 @@ package agent
 import (
 	"crypto/sha1"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -88,6 +89,21 @@ func SessionNameFor(repoRoot, branch, worktreePath string) string {
 	return name
 }
 
+// CurrentTmuxSessionName returns the tmux session name for the current pane,
+// or empty string when not running inside tmux or when it cannot be resolved.
+func CurrentTmuxSessionName() string {
+	pane := strings.TrimSpace(os.Getenv("TMUX_PANE"))
+	if pane == "" {
+		return ""
+	}
+
+	out, err := tmuxOutput("display-message", "-p", "-t", pane, "#{session_name}")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // Agent manages an AI coding process via a dedicated tmux session.
 type Agent struct {
 	mu                 sync.Mutex
@@ -146,6 +162,9 @@ func tmuxCombinedOutput(args ...string) ([]byte, error) {
 // Returns true if an existing session was found.
 func (a *Agent) Reconnect(workdir, branch, repoRoot, tmuxPrefix string) bool {
 	name := SessionNameFor(repoRoot, branch, workdir)
+	if current := CurrentTmuxSessionName(); current != "" && current == name {
+		return false
+	}
 	if err := tmuxRun("has-session", "-t", name); err != nil {
 		return false
 	}
