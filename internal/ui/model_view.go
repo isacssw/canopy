@@ -15,15 +15,15 @@ func (m *Model) View() string {
 	}
 
 	if m.mode == modeHelp {
-		return m.renderHelp()
+		return m.renderRoot(m.renderHelp())
 	}
 
 	if m.mode == modeAgentPicker {
-		return m.renderAgentPicker()
+		return m.renderRoot(m.renderAgentPicker())
 	}
 
 	if m.mode == modeDiff {
-		return m.renderDiff()
+		return m.renderRoot(m.renderDiff())
 	}
 
 	leftW := m.leftPanelWidth()
@@ -38,14 +38,21 @@ func (m *Model) View() string {
 
 	switch m.mode {
 	case modeNewWorktree:
-		return m.renderInputModal("New Worktree", "Branch name")
+		return m.renderRoot(m.renderInputModal("New Worktree", "Branch name"))
 	case modeNewWorktreeBase:
-		return m.renderInputModal("Base Branch", "Base branch")
+		return m.renderRoot(m.renderInputModal("Base Branch", "Base branch"))
 	case modeSendInput:
-		return m.renderInputModal("Send to Agent", "Message")
+		return m.renderRoot(m.renderInputModal("Send to Agent", "Message"))
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, body, status)
+	return m.renderRoot(lipgloss.JoinVertical(lipgloss.Left, body, status))
+}
+
+func (m *Model) renderRoot(content string) string {
+	if m.width <= 0 || m.height <= 0 {
+		return content
+	}
+	return m.st.app.Width(m.width).Height(m.height).Render(content)
 }
 
 // entryLineHeight returns the number of terminal lines an entry occupies
@@ -100,8 +107,20 @@ func (m *Model) renderWorktreePanel(w, h int) string {
 			break
 		}
 
+		selected := i == m.cursor
+
+		textStyle := m.st.normal
+		mutedStyle := m.st.muted
+		focusStyle := m.st.selectedFocus
+		blockStyle := lipgloss.NewStyle().Width(w - 4)
+		if selected {
+			textStyle = m.st.selectedText
+			mutedStyle = m.st.selectedMuted
+			blockStyle = m.st.selectedBlock.Width(w - 4)
+		}
+
 		icon := statusIcon(e.agent.Status())
-		iconS := m.statusStyle(e.agent.Status()).Render(icon)
+		iconS := m.statusStyle(e.agent.Status(), selected).Render(icon)
 
 		branch := e.wt.Branch
 		if branch == "" {
@@ -110,21 +129,25 @@ func (m *Model) renderWorktreePanel(w, h int) string {
 
 		base := ""
 		if e.wt.BaseBranch != "" {
-			base = m.st.muted.Render("  " + e.wt.BaseBranch + " ← " + branch)
+			base = mutedStyle.Render("  " + e.wt.BaseBranch + " ← " + branch)
 		}
 
-		statusTxt := m.statusStyle(e.agent.Status()).Render(e.agent.Status().String())
+		statusTxt := m.statusStyle(e.agent.Status(), selected).Render(e.agent.Status().String())
 
 		badge := ""
 		if e.unread {
-			badge = " " + lipgloss.NewStyle().Foreground(m.theme.Yellow).Bold(true).Render("●")
+			badgeStyle := lipgloss.NewStyle().Foreground(m.theme.Yellow).Bold(true)
+			if selected {
+				badgeStyle = focusStyle
+			}
+			badge = badgeStyle.Render(" ●")
 		}
-		line1 := fmt.Sprintf(" %s %s%s", iconS, m.st.normal.Render(branch), badge)
+		line1 := textStyle.Render(" ") + iconS + textStyle.Render(" ") + textStyle.Render(branch) + badge
 		line2 := base
-		line3 := fmt.Sprintf("   %s", statusTxt)
+		line3 := textStyle.Render("   ") + statusTxt
 
 		if e.wt.IsMain {
-			line1 = fmt.Sprintf(" %s %s %s%s", iconS, m.st.normal.Render(branch), m.st.muted.Render("(main)"), badge)
+			line1 = textStyle.Render(" ") + iconS + textStyle.Render(" ") + textStyle.Render(branch) + textStyle.Render(" ") + mutedStyle.Render("(main)") + badge
 			line2 = ""
 		}
 
@@ -134,11 +157,7 @@ func (m *Model) renderWorktreePanel(w, h int) string {
 		}
 		block += "\n" + line3
 
-		if i == m.cursor {
-			block = m.st.selected.Width(w - 4).Render(block)
-		} else {
-			block = lipgloss.NewStyle().Width(w - 4).Render(block)
-		}
+		block = blockStyle.Render(block)
 
 		if sep > 0 {
 			rows = append(rows, m.st.muted.Render(strings.Repeat("─", w-4)))
@@ -273,13 +292,25 @@ func (m *Model) renderDiffFileList(w, h int) string {
 		}
 		name = truncateMiddle(name, nameW)
 
-		line := fmt.Sprintf(" %s %s%s", iconStyle.Render(icon), m.st.normal.Render(name), statStr)
 		if i == m.diffCursor {
-			line = m.st.selected.Inline(true).Width(lineW).MaxWidth(lineW).Render(line)
+			iconStyle = m.st.selectedFocus
+			nameStyle := m.st.selectedText
+			if f.IsBinary {
+				statStr = m.st.selectedMuted.Render(" bin")
+			} else if f.Added > 0 || f.Removed > 0 {
+				statStr = m.st.selectedText.Render(" ") + m.st.selectedFocus.Render(fmt.Sprintf("+%d", f.Added))
+				if f.Removed > 0 {
+					statStr += m.st.selectedText.Render(" ") + m.st.selectedFocus.Render(fmt.Sprintf("-%d", f.Removed))
+				}
+			}
+			line := nameStyle.Render(" ") + iconStyle.Render(icon) + nameStyle.Render(" ") + nameStyle.Render(name) + statStr
+			line = m.st.selectedBlock.Inline(true).Width(lineW).MaxWidth(lineW).Render(line)
+			rows = append(rows, line)
 		} else {
+			line := m.st.normal.Render(" ") + iconStyle.Render(icon) + m.st.normal.Render(" ") + m.st.normal.Render(name) + statStr
 			line = lipgloss.NewStyle().Inline(true).Width(lineW).MaxWidth(lineW).Render(line)
+			rows = append(rows, line)
 		}
-		rows = append(rows, line)
 	}
 
 	if len(rows) == 0 {
@@ -524,12 +555,22 @@ func (m *Model) renderAgentPicker() string {
 
 	var rows []string
 	for i, p := range m.pickerAgents {
-		block := m.st.normal.Render(p.Name)
-		if p.Command != p.Name {
-			block += "\n" + m.st.muted.Render(p.Command)
+		selected := i == m.pickerCursor
+		textStyle := m.st.normal
+		mutedStyle := m.st.muted
+		blockStyle := lipgloss.NewStyle()
+		if selected {
+			textStyle = m.st.selectedText
+			mutedStyle = m.st.selectedMuted
+			blockStyle = m.st.selectedBlock.Width(w - 8)
 		}
-		if i == m.pickerCursor {
-			block = m.st.selected.Width(w - 8).Render(block)
+
+		block := textStyle.Render(p.Name)
+		if p.Command != p.Name {
+			block += "\n" + mutedStyle.Render(p.Command)
+		}
+		if selected {
+			block = blockStyle.Render(block)
 		}
 		rows = append(rows, block)
 	}

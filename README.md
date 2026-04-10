@@ -141,6 +141,7 @@ Agents keep running after you quit canopy. They're just tmux sessions. You can r
   ],
   "left_panel_width": 38,
   "theme": "github-dark",
+  "output_colors": "adaptive",
   "idle_timeout_secs": 0,
   "tmux_prefix": "C-Space"
 }
@@ -154,6 +155,7 @@ With a single agent configured, pressing `r` starts it immediately. With two or 
 | `agent_command` | — | **Legacy.** Single agent command, used when `agents` is not set. Existing configs continue to work without any changes. |
 | `left_panel_width` | `38` | Width of the worktree list panel in columns. Minimum `20`. Omit to use the default. |
 | `theme` | `"github-dark"` | UI colour theme. Options: `"github-dark"`, `"nord"`, `"catppuccin"`, `"light"`. Omit or leave empty for the default. |
+| `output_colors` | theme-dependent | Agent output colour handling. Options: `"preserve"` to keep raw ANSI colours from tmux, `"plain"` to strip ANSI and render output with the current theme text colour, or `"adaptive"` to remap ANSI colours into the active theme palette. Defaults to `"adaptive"` for the `light` theme and `"preserve"` otherwise. |
 | `idle_timeout_secs` | `0` | Seconds of no new agent output before status is promoted from **running** to **waiting**. `0` disables the timeout. Useful for non-Claude agents that don't emit standard input-prompt patterns. |
 | `tmux_prefix` | — | Custom prefix key for canopy's tmux sessions (e.g. `"C-Space"`, `"C-a"`). Avoids double-prefix when running inside an existing tmux. Omit to use tmux's default (`C-b`). |
 

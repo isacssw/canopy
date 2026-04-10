@@ -36,23 +36,17 @@ type configSavedMsg struct {
 	err error
 }
 
-// ── Styles ───────────────────────────────────────────────────────────────────
-
-var (
-	styleSetupCard = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(ThemeByName("").Border).
-			Padding(1, 3)
-
-	styleSetupHeading = lipgloss.NewStyle().Foreground(ThemeByName("").Text).Bold(true)
-	styleSetupOk      = lipgloss.NewStyle().Foreground(ThemeByName("").Green)
-	styleSetupWarn    = lipgloss.NewStyle().Foreground(ThemeByName("").Yellow)
-	styleSetupHint    = lipgloss.NewStyle().Foreground(ThemeByName("").Muted)
-	styleSummaryKey   = lipgloss.NewStyle().Foreground(ThemeByName("").Muted)
-	styleSummaryVal   = lipgloss.NewStyle().Foreground(ThemeByName("").Accent).Bold(true)
-)
-
 // ── Model ────────────────────────────────────────────────────────────────────
+
+type setupStyles struct {
+	card       lipgloss.Style
+	heading    lipgloss.Style
+	ok         lipgloss.Style
+	warn       lipgloss.Style
+	hint       lipgloss.Style
+	summaryKey lipgloss.Style
+	summaryVal lipgloss.Style
+}
 
 type SetupModel struct {
 	step              setupStep
@@ -65,9 +59,11 @@ type SetupModel struct {
 	nameInput         textinput.Model
 	pendingAgentCmd   string
 	result            *config.Config
+	styles            setupStyles
 }
 
 func NewSetupModel() *SetupModel {
+	theme := ThemeByName("")
 	ti := textinput.New()
 	ti.SetValue("claude")
 	ti.Prompt = "> "
@@ -81,6 +77,30 @@ func NewSetupModel() *SetupModel {
 		step:       stepWelcome,
 		agentInput: ti,
 		nameInput:  ni,
+		styles:     newSetupStyles(theme),
+	}
+}
+
+func newSetupStyles(t Theme) setupStyles {
+	return setupStyles{
+		card: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(t.Border).
+			Padding(1, 3),
+		heading: lipgloss.NewStyle().
+			Foreground(t.Text).
+			Bold(true),
+		ok: lipgloss.NewStyle().
+			Foreground(t.Green),
+		warn: lipgloss.NewStyle().
+			Foreground(t.Yellow),
+		hint: lipgloss.NewStyle().
+			Foreground(t.Muted),
+		summaryKey: lipgloss.NewStyle().
+			Foreground(t.Muted),
+		summaryVal: lipgloss.NewStyle().
+			Foreground(t.Accent).
+			Bold(true),
 	}
 }
 
@@ -263,14 +283,14 @@ func (m *SetupModel) View() string {
 		inner = m.viewComplete()
 	}
 
-	card := styleSetupCard.Width(cardW).Render(inner)
+	card := m.styles.card.Width(cardW).Render(inner)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
 }
 
 func (m *SetupModel) viewWelcome(_ int) string {
 	logo := lipgloss.NewStyle().Foreground(colorForest).Bold(true).Render(logoASCII)
 	tag := lipgloss.NewStyle().Foreground(colorBark).Render(Tagline)
-	hint := styleSetupHint.Render("press any key to begin setup")
+	hint := m.styles.hint.Render("press any key to begin setup")
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		logo,
@@ -282,9 +302,9 @@ func (m *SetupModel) viewWelcome(_ int) string {
 }
 
 func (m *SetupModel) viewAgent() string {
-	step := styleSetupHint.Render("step 1 / 3")
-	heading := styleSetupHeading.Render("Agent Command")
-	desc := styleSetupHint.Render(
+	step := m.styles.hint.Render("step 1 / 3")
+	heading := m.styles.heading.Render("Agent Command")
+	desc := m.styles.hint.Render(
 		"Command used to launch an AI coding agent in each worktree.\n" +
 			"Defaults to `claude` (Claude Code).",
 	)
@@ -294,14 +314,14 @@ func (m *SetupModel) viewAgent() string {
 	var validation string
 	switch {
 	case m.agentCheckPending:
-		validation = styleSetupHint.Render("  checking…")
+		validation = m.styles.hint.Render("  checking…")
 	case m.agentChecked && m.agentValid:
-		validation = styleSetupOk.Render("  ✓ found in PATH")
+		validation = m.styles.ok.Render("  ✓ found in PATH")
 	case m.agentChecked && !m.agentValid:
-		validation = styleSetupWarn.Render("  ⚠ not found in PATH — you can still continue")
+		validation = m.styles.warn.Render("  ⚠ not found in PATH — you can still continue")
 	}
 
-	hint := styleSetupHint.Render("enter to continue  •  esc to cancel")
+	hint := m.styles.hint.Render("enter to continue  •  esc to cancel")
 
 	parts := []string{step, "", heading, "", desc, "", input}
 	if validation != "" {
@@ -313,14 +333,14 @@ func (m *SetupModel) viewAgent() string {
 }
 
 func (m *SetupModel) viewAgentName() string {
-	step := styleSetupHint.Render("step 2 / 3")
-	heading := styleSetupHeading.Render("Agent Name")
-	desc := styleSetupHint.Render(
+	step := m.styles.hint.Render("step 2 / 3")
+	heading := m.styles.heading.Render("Agent Name")
+	desc := m.styles.hint.Render(
 		"A short label for this agent profile, shown in the picker.\n" +
 			"Press enter to accept the default.",
 	)
 	input := m.nameInput.View()
-	hint := styleSetupHint.Render("enter to continue  •  esc to go back")
+	hint := m.styles.hint.Render("enter to continue  •  esc to go back")
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		step, "", heading, "", desc, "", input, "", hint,
@@ -328,34 +348,34 @@ func (m *SetupModel) viewAgentName() string {
 }
 
 func (m *SetupModel) viewComplete() string {
-	heading := styleSetupOk.Bold(true).Render("Setup complete!")
-	saved := styleSetupOk.Render(
+	heading := m.styles.ok.Bold(true).Render("Setup complete!")
+	saved := m.styles.ok.Render(
 		fmt.Sprintf("  ✓ configuration saved to %s", config.DefaultConfigPath()),
 	)
 
 	profile := m.result.ResolvedAgents()[0]
 	summary := lipgloss.JoinVertical(lipgloss.Left,
 		lipgloss.JoinHorizontal(lipgloss.Top,
-			styleSummaryKey.Render("  name     "),
-			styleSummaryVal.Render(profile.Name),
+			m.styles.summaryKey.Render("  name     "),
+			m.styles.summaryVal.Render(profile.Name),
 		),
 		lipgloss.JoinHorizontal(lipgloss.Top,
-			styleSummaryKey.Render("  command  "),
-			styleSummaryVal.Render(profile.Command),
+			m.styles.summaryKey.Render("  command  "),
+			m.styles.summaryVal.Render(profile.Command),
 		),
 	)
 
-	tip := styleSetupHint.Render("tip: add more agents in ~/.config/canopy/config.json")
+	tip := m.styles.hint.Render("tip: add more agents in ~/.config/canopy/config.json")
 
 	whatsNext := lipgloss.JoinVertical(lipgloss.Left,
-		styleSetupHeading.Render("what's next"),
+		m.styles.heading.Render("what's next"),
 		"",
-		styleSetupHint.Render("  n   create a new worktree"),
-		styleSetupHint.Render("  r   run an agent in the selected worktree"),
-		styleSetupHint.Render("  a   attach to a running agent session"),
+		m.styles.hint.Render("  n   create a new worktree"),
+		m.styles.hint.Render("  r   run an agent in the selected worktree"),
+		m.styles.hint.Render("  a   attach to a running agent session"),
 	)
 
-	hint := styleSetupHint.Render("press enter to launch canopy")
+	hint := m.styles.hint.Render("press enter to launch canopy")
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		heading,
