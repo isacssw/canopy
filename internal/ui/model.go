@@ -526,9 +526,15 @@ func (m *Model) enterInput(md mode, hint, defaultVal string) {
 }
 
 func (m *Model) resizePanels() {
-	rightW := m.width - m.leftPanelWidth() - 6
-	innerH := m.height - 6
-	m.outputVP = viewport.New(rightW, innerH)
+	rightW := m.width - m.leftPanelWidth() - 1
+	if rightW < 1 {
+		rightW = 1
+	}
+	panelH := m.height - 1
+	if panelH < 1 {
+		panelH = 1
+	}
+	m.outputVP = viewport.New(panelInnerWidth(rightW), panelBodyHeight(panelH))
 	m.syncOutputViewport()
 	if m.mode == modeDiff {
 		m.syncDiffViewport()
@@ -538,16 +544,16 @@ func (m *Model) resizePanels() {
 func (m *Model) syncDiffViewport() {
 	// Right panel dimensions: total width minus left file list panel minus gaps
 	leftW := m.diffFileListWidth()
-	rightW := m.width - leftW - 5 // borders + gap
-	innerH := m.height - 6        // borders + status bar + title
+	rightW := m.width - leftW - 1
 	if rightW < 10 {
 		rightW = 10
 	}
-	if innerH < 1 {
-		innerH = 1
+	panelH := m.height - 1
+	if panelH < 1 {
+		panelH = 1
 	}
 
-	m.diffFileVP = viewport.New(rightW, innerH)
+	m.diffFileVP = viewport.New(panelInnerWidth(rightW), panelBodyHeight(panelH))
 
 	if len(m.diffFiles) == 0 {
 		m.diffFileVP.SetContent(m.st.muted.Render("(no changes)"))
@@ -580,6 +586,30 @@ func (m *Model) diffFileListWidth() int {
 		w = 50
 	}
 	return w
+}
+
+func panelInnerWidth(panelWidth int) int {
+	width := panelWidth - 2 // left and right borders
+	if width < 1 {
+		return 1
+	}
+	return width
+}
+
+func panelInnerHeight(panelHeight int) int {
+	height := panelHeight - 2 // top and bottom borders
+	if height < 1 {
+		return 1
+	}
+	return height
+}
+
+func panelBodyHeight(panelHeight int) int {
+	height := panelHeight - 3 // top border, title row, bottom border
+	if height < 1 {
+		return 1
+	}
+	return height
 }
 
 func (m *Model) syncOutputViewport() {

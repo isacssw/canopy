@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -26,8 +27,8 @@ func (m *Model) View() string {
 	}
 
 	leftW := m.leftPanelWidth()
-	rightW := m.width - leftW - 3
-	innerH := m.height - 4 // leave room for status bar + border
+	rightW := m.width - leftW - 1
+	innerH := m.height - 1 // leave room for status bar
 
 	left := m.renderWorktreePanel(leftW, innerH)
 	right := m.renderOutputPanel(rightW, innerH)
@@ -59,7 +60,7 @@ func (m *Model) entryLineHeight(i int) int {
 
 func (m *Model) renderWorktreePanel(w, h int) string {
 	title := m.st.panelTitle.Render("  worktrees")
-	visibleH := h - 1 // subtract title line
+	visibleH := panelBodyHeight(h)
 
 	// Clamp worktreeScroll so cursor is always visible.
 	if len(m.entries) > 0 {
@@ -153,8 +154,8 @@ func (m *Model) renderWorktreePanel(w, h int) string {
 
 	content := strings.Join(rows, "\n")
 	panel := m.st.panelBorder.
-		Width(w).
-		Height(h).
+		Width(panelInnerWidth(w)).
+		Height(panelInnerHeight(h)).
 		Render(title + "\n" + content)
 
 	return panel
@@ -173,8 +174,8 @@ func (m *Model) renderOutputPanel(w, h int) string {
 
 	content := m.outputVP.View()
 	panel := m.st.panelBorder.
-		Width(w).
-		Height(h).
+		Width(panelInnerWidth(w)).
+		Height(panelInnerHeight(h)).
 		Render(m.st.panelTitle.Render(title) + "\n" + content)
 
 	return panel
@@ -182,8 +183,8 @@ func (m *Model) renderOutputPanel(w, h int) string {
 
 func (m *Model) renderDiff() string {
 	leftW := m.diffFileListWidth()
-	rightW := m.width - leftW - 3
-	innerH := m.height - 4
+	rightW := m.width - leftW - 1
+	innerH := m.height - 1
 
 	left := m.renderDiffFileList(leftW, innerH)
 	right := m.renderDiffPatch(rightW, innerH)
@@ -209,7 +210,7 @@ func (m *Model) renderDiffFileList(w, h int) string {
 		)
 	}
 	var rows []string
-	visibleH := h - 1 // minus title line
+	visibleH := panelBodyHeight(h)
 
 	scrollInfo := ""
 	if len(m.diffFiles) > visibleH {
@@ -262,13 +263,21 @@ func (m *Model) renderDiffFileList(w, h int) string {
 				lipgloss.NewStyle().Foreground(m.theme.Red).Render(fmt.Sprintf("-%d", f.Removed))
 		}
 
-		line := fmt.Sprintf(" %s %s%s", iconStyle.Render(icon), m.st.normal.Render(name), statStr)
-
 		lineW := w - 4
+		if lineW < 1 {
+			lineW = 1
+		}
+		nameW := lineW - lipgloss.Width(" "+icon+" ") - lipgloss.Width(stripANSI(statStr))
+		if nameW < 1 {
+			nameW = 1
+		}
+		name = truncateMiddle(name, nameW)
+
+		line := fmt.Sprintf(" %s %s%s", iconStyle.Render(icon), m.st.normal.Render(name), statStr)
 		if i == m.diffCursor {
-			line = m.st.selected.Width(lineW).Render(line)
+			line = m.st.selected.Inline(true).Width(lineW).MaxWidth(lineW).Render(line)
 		} else {
-			line = lipgloss.NewStyle().Width(lineW).Render(line)
+			line = lipgloss.NewStyle().Inline(true).Width(lineW).MaxWidth(lineW).Render(line)
 		}
 		rows = append(rows, line)
 	}
@@ -285,8 +294,8 @@ func (m *Model) renderDiffFileList(w, h int) string {
 	}
 
 	return borderStyle.
-		Width(w).
-		Height(h).
+		Width(panelInnerWidth(w)).
+		Height(panelInnerHeight(h)).
 		Render(title + "\n" + content)
 }
 
@@ -295,10 +304,17 @@ func (m *Model) renderDiffPatch(w, h int) string {
 	scrollPct := ""
 	if len(m.diffFiles) > 0 && m.diffCursor < len(m.diffFiles) {
 		fileName = m.diffFiles[m.diffCursor].Name
+		// Show scroll percentage in the title because the patch pane can become
+		// much taller than the viewport during crowded diff investigations.
 		pct := m.diffFileVP.ScrollPercent()
 		scrollPct = m.st.muted.Render(fmt.Sprintf(" %d%%", int(pct*100)))
 	}
-	title := m.st.panelTitle.Render(" "+fileName) + scrollPct
+	titleW := panelInnerWidth(w)
+	if titleW < 1 {
+		titleW = 1
+	}
+	fileName = truncateMiddle(fileName, titleW-lipgloss.Width(stripANSI(scrollPct))-1)
+	title := m.st.panelTitle.Inline(true).MaxWidth(titleW).Render(" "+fileName) + scrollPct
 
 	content := m.diffFileVP.View()
 
@@ -308,9 +324,93 @@ func (m *Model) renderDiffPatch(w, h int) string {
 	}
 
 	return borderStyle.
-		Width(w).
-		Height(h).
+		Width(panelInnerWidth(w)).
+		Height(panelInnerHeight(h)).
 		Render(title + "\n" + content)
+}
+
+func truncateMiddle(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= maxWidth {
+		return s
+	}
+
+	const ellipsis = "..."
+	if maxWidth <= len(ellipsis) {
+		return ellipsis[:maxWidth]
+	}
+
+	remaining := maxWidth - len(ellipsis)
+	leftW := remaining / 2
+	rightW := remaining - leftW
+
+	left := takePrefixWidth(s, leftW)
+	right := takeSuffixWidth(s, rightW)
+	return left + ellipsis + right
+}
+
+func takePrefixWidth(s string, maxWidth int) string {
+	if maxWidth <= 0 || s == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	width := 0
+	for _, r := range s {
+		rw := lipgloss.Width(string(r))
+		if width+rw > maxWidth {
+			break
+		}
+		b.WriteRune(r)
+		width += rw
+	}
+	return b.String()
+}
+
+func takeSuffixWidth(s string, maxWidth int) string {
+	if maxWidth <= 0 || s == "" {
+		return ""
+	}
+
+	runes := []rune(s)
+	width := 0
+	start := len(runes)
+	for start > 0 {
+		r := runes[start-1]
+		rw := lipgloss.Width(string(r))
+		if width+rw > maxWidth {
+			break
+		}
+		start--
+		width += rw
+	}
+	return string(runes[start:])
+}
+
+func stripANSI(s string) string {
+	var b strings.Builder
+	for len(s) > 0 {
+		if s[0] == '\x1b' {
+			end := 1
+			for end < len(s) && s[end] != 'm' {
+				end++
+			}
+			if end < len(s) {
+				s = s[end+1:]
+				continue
+			}
+			break
+		}
+		r, size := utf8.DecodeRuneInString(s)
+		if r == utf8.RuneError && size == 1 {
+			break
+		}
+		b.WriteRune(r)
+		s = s[size:]
+	}
+	return b.String()
 }
 
 func (m *Model) renderDiffStatusBar() string {
