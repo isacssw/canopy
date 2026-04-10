@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/isacssw/canopy/internal/agent"
 	"github.com/isacssw/canopy/internal/config"
@@ -19,17 +20,23 @@ import (
 // ── Styles ───────────────────────────────────────────────────────────────────
 
 type styles struct {
-	panelBorder lipgloss.Style
-	panelTitle  lipgloss.Style
-	selected    lipgloss.Style
-	normal      lipgloss.Style
-	muted       lipgloss.Style
-	statusBar   lipgloss.Style
-	key         lipgloss.Style
+	app           lipgloss.Style
+	panelBorder   lipgloss.Style
+	panelTitle    lipgloss.Style
+	selectedBlock lipgloss.Style
+	selectedText  lipgloss.Style
+	selectedMuted lipgloss.Style
+	selectedFocus lipgloss.Style
+	normal        lipgloss.Style
+	muted         lipgloss.Style
+	statusBar     lipgloss.Style
+	key           lipgloss.Style
+	output        lipgloss.Style
 }
 
 func newStyles(t Theme) styles {
 	return styles{
+		app: lipgloss.NewStyle(),
 		panelBorder: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(t.Border),
@@ -37,26 +44,43 @@ func newStyles(t Theme) styles {
 			Foreground(t.Accent).
 			Bold(true).
 			PaddingLeft(1),
-		selected: lipgloss.NewStyle().
+		selectedBlock: lipgloss.NewStyle().
 			Background(t.SelectedBg).
-			Foreground(t.Accent).
+			Foreground(t.SelectedText).
+			Border(lipgloss.ThickBorder(), false, false, false, true).
+			BorderForeground(t.SelectedAccent).
+			PaddingLeft(1),
+		selectedText: lipgloss.NewStyle().
+			Foreground(t.SelectedText).
+			Background(t.SelectedBg).
+			Bold(true),
+		selectedMuted: lipgloss.NewStyle().
+			Foreground(t.SelectedMuted).
+			Background(t.SelectedBg),
+		selectedFocus: lipgloss.NewStyle().
+			Foreground(t.SelectedAccent).
+			Background(t.SelectedBg).
 			Bold(true),
 		normal: lipgloss.NewStyle().Foreground(t.Text),
 		muted:  lipgloss.NewStyle().Foreground(t.Muted),
 		statusBar: lipgloss.NewStyle().
 			Background(t.StatusBarBg).
-			Foreground(t.Muted).
+			Foreground(t.StatusBarText).
 			PaddingLeft(1).
 			PaddingRight(1),
 		key: lipgloss.NewStyle().
 			Background(t.KeyBg).
-			Foreground(t.Accent).
+			Foreground(t.KeyText).
 			PaddingLeft(1).
 			PaddingRight(1),
+		output: lipgloss.NewStyle().Foreground(t.Text),
 	}
 }
 
-func (m *Model) statusStyle(s agent.Status) lipgloss.Style {
+func (m *Model) statusStyle(s agent.Status, selected bool) lipgloss.Style {
+	if selected {
+		return m.st.selectedFocus
+	}
 	switch s {
 	case agent.StatusRunning:
 		return lipgloss.NewStyle().Foreground(m.theme.Green)
@@ -172,9 +196,18 @@ type Model struct {
 	program   *tea.Program
 
 	theme         Theme
+	outputColors  outputColorMode
 	st            styles
 	pendingDelete *pendingDeleteState
 }
+
+type outputColorMode string
+
+const (
+	outputColorModePreserve outputColorMode = "preserve"
+	outputColorModePlain    outputColorMode = "plain"
+	outputColorModeAdaptive outputColorMode = "adaptive"
+)
 
 func New(cfg *config.Config) *Model {
 	ti := textinput.New()
@@ -187,10 +220,11 @@ func New(cfg *config.Config) *Model {
 	t := ThemeByName(themeName)
 
 	return &Model{
-		cfg:   cfg,
-		input: ti,
-		theme: t,
-		st:    newStyles(t),
+		cfg:          cfg,
+		input:        ti,
+		theme:        t,
+		outputColors: resolveOutputColorMode(cfg, themeName),
+		st:           newStyles(t),
 	}
 }
 
@@ -622,8 +656,35 @@ func (m *Model) syncOutputViewport() {
 		m.outputVP.SetContent(m.st.muted.Render("no output yet — press r to run agent"))
 		return
 	}
-	m.outputVP.SetContent(snap)
+	m.outputVP.SetContent(m.renderSnapshot(snap))
 	m.outputVP.GotoBottom()
+}
+
+func resolveOutputColorMode(cfg *config.Config, themeName string) outputColorMode {
+	if cfg != nil {
+		switch cfg.OutputColors {
+		case string(outputColorModePlain):
+			return outputColorModePlain
+		case string(outputColorModePreserve):
+			return outputColorModePreserve
+		case string(outputColorModeAdaptive):
+			return outputColorModeAdaptive
+		}
+	}
+	if themeName == "light" {
+		return outputColorModeAdaptive
+	}
+	return outputColorModePreserve
+}
+
+func (m *Model) renderSnapshot(snapshot string) string {
+	if m.outputColors == outputColorModePlain {
+		return m.st.output.Render(ansi.Strip(snapshot))
+	}
+	if m.outputColors == outputColorModeAdaptive {
+		return remapANSIForTheme(snapshot, m.theme)
+	}
+	return snapshot
 }
 
 func (m *Model) bindAgentOnChange(wtPath string, ag *agent.Agent) {

@@ -22,6 +22,7 @@ type Config struct {
 	RepoRoot        string         `json:"repo_root"`
 	LeftPanelWidth  int            `json:"left_panel_width,omitempty"`  // 0 = default 38
 	Theme           string         `json:"theme,omitempty"`             // "", "github-dark", "nord", "catppuccin", "light"
+	OutputColors    string         `json:"output_colors,omitempty"`     // "", "preserve", "plain", "adaptive"
 	IdleTimeoutSecs int            `json:"idle_timeout_secs,omitempty"` // 0 = disabled
 	TmuxPrefix      string         `json:"tmux_prefix,omitempty"`       // custom prefix key for canopy tmux sessions (e.g. "C-Space")
 }
@@ -54,6 +55,12 @@ func (c *Config) Normalize() {
 
 	c.AgentCommand = strings.TrimSpace(c.AgentCommand)
 	c.Theme = strings.TrimSpace(c.Theme)
+	c.OutputColors = strings.ToLower(strings.TrimSpace(c.OutputColors))
+	switch c.OutputColors {
+	case "", "preserve", "plain", "adaptive":
+	default:
+		c.OutputColors = ""
+	}
 	if c.LeftPanelWidth < 0 {
 		c.LeftPanelWidth = 0
 	}

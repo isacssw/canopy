@@ -47,6 +47,7 @@ func TestNormalizeClampsValues(t *testing.T) {
 		LeftPanelWidth:  -12,
 		IdleTimeoutSecs: -3,
 		Theme:           "  github-dark  ",
+		OutputColors:    "  ADAPTIVE  ",
 		AgentCommand:    "  claude  ",
 		Agents: []AgentProfile{
 			{Name: "", Command: "  claude  "},
@@ -64,6 +65,9 @@ func TestNormalizeClampsValues(t *testing.T) {
 	}
 	if cfg.Theme != "github-dark" {
 		t.Fatalf("Theme = %q, want github-dark", cfg.Theme)
+	}
+	if cfg.OutputColors != "adaptive" {
+		t.Fatalf("OutputColors = %q, want adaptive", cfg.OutputColors)
 	}
 	if cfg.AgentCommand != "claude" {
 		t.Fatalf("AgentCommand = %q, want claude", cfg.AgentCommand)
@@ -92,5 +96,15 @@ branch refs/heads/feat/something
 func TestDetectMainWorktreePathEmpty(t *testing.T) {
 	if got := detectMainWorktreePath("HEAD deadbeef"); got != "" {
 		t.Fatalf("detectMainWorktreePath() = %q, want empty", got)
+	}
+}
+
+func TestNormalizeDropsUnknownOutputColors(t *testing.T) {
+	cfg := &Config{OutputColors: "solarized"}
+
+	cfg.Normalize()
+
+	if cfg.OutputColors != "" {
+		t.Fatalf("OutputColors = %q, want empty", cfg.OutputColors)
 	}
 }
