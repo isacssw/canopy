@@ -66,7 +66,7 @@ func main() {
 		fmt.Println()
 		fmt.Println("  Diff view")
 		fmt.Println("    d        open diff view")
-		fmt.Println("    e        open file in $EDITOR (nvim-aware)")
+		fmt.Println("    e        open file in editor (nvim/VS Code/Cursor aware)")
 		fmt.Println()
 		fmt.Println("  Other")
 		fmt.Println("    ?        toggle help")
