@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/isacssw/canopy/internal/agent"
+	"github.com/isacssw/canopy/internal/cmdline"
 	"github.com/isacssw/canopy/internal/config"
 	"github.com/isacssw/canopy/internal/worktree"
 )
@@ -217,21 +218,27 @@ func (m *Model) openInEditor() tea.Cmd {
 		)
 	}
 
-	// Fallback: launch $EDITOR (or nvim) in the foreground.
+	// Fallback: launch $EDITOR (or nvim), with editor-specific line-jump args.
 	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "nvim"
+	cmd, background, err := buildEditorOpenCommand(editor, wt.Path, filePath, line)
+	if err != nil {
+		return func() tea.Msg { return errMsg{err} }
 	}
-	lineArg := fmt.Sprintf("+%d", line)
-	return tea.ExecProcess(
-		exec.Command(editor, lineArg, filePath),
-		func(err error) tea.Msg {
-			if err != nil {
+	if background {
+		return func() tea.Msg {
+			if err := cmd.Start(); err != nil {
 				return errMsg{err}
 			}
+			go func() { _ = cmd.Wait() }()
 			return agentChangedMsg{wtPath: wt.Path}
-		},
-	)
+		}
+	}
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		if err != nil {
+			return errMsg{err}
+		}
+		return agentChangedMsg{wtPath: wt.Path}
+	})
 }
 
 func buildNvimRemoteOpenCommand(wtPath, filePath string, line int) string {
@@ -242,6 +249,34 @@ func buildNvimRemoteOpenCommand(wtPath, filePath string, line int) string {
 		line,
 		filePath,
 	)
+}
+
+func buildEditorOpenCommand(editor, wtPath, filePath string, line int) (*exec.Cmd, bool, error) {
+	if strings.TrimSpace(editor) == "" {
+		editor = "nvim"
+	}
+
+	fields := cmdline.Fields(editor)
+	if len(fields) == 0 {
+		return nil, false, fmt.Errorf("editor command is empty")
+	}
+
+	exe := fields[0]
+	args := append([]string{}, fields[1:]...)
+	base := strings.ToLower(filepath.Base(exe))
+
+	switch base {
+	case "code", "code-insiders", "codium", "cursor":
+		args = append(args, "--reuse-window", "--goto", fmt.Sprintf("%s:%d:1", filePath, line))
+		cmd := exec.Command(exe, args...)
+		cmd.Dir = wtPath
+		return cmd, true, nil
+	default:
+		args = append(args, fmt.Sprintf("+%d", line), filePath)
+		cmd := exec.Command(exe, args...)
+		cmd.Dir = wtPath
+		return cmd, false, nil
+	}
 }
 
 func (m *Model) executePendingDelete() tea.Cmd {

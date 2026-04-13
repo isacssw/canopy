@@ -89,6 +89,7 @@ Config is saved to `~/.config/canopy/config.json`.
 | `u` / `esc` | Cancel a pending delete during the countdown |
 | `i` | Send input to agent when it's waiting |
 | `R` | Refresh worktree list |
+| `e` | Open selected diff file in your editor at the changed line |
 | `?` | Toggle keybindings help overlay |
 | `q` | Quit |
 
@@ -177,6 +178,10 @@ Pressing `D` on a worktree asks for confirmation. After pressing `y`, canopy sta
 ### Neovim
 
 For Neovim users, see [canopy.nvim](https://github.com/isacssw/canopy.nvim) for setup instructions and integration.
+
+### VS Code and Cursor
+
+Set `EDITOR=code` or `EDITOR=cursor` and press `e` from diff view. Canopy opens the selected file at the first changed hunk line in your GUI editor.
 
 ## Contributing
 

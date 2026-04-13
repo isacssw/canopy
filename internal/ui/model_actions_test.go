@@ -34,6 +34,69 @@ func TestBuildTmuxAttachCommandOutsideTmux(t *testing.T) {
 	}
 }
 
+func TestBuildEditorOpenCommandVSCode(t *testing.T) {
+	wtPath := "/tmp/my wt"
+	filePath := `/tmp/my wt/a "b".go`
+
+	cmd, background, err := buildEditorOpenCommand("code --profile work", wtPath, filePath, 42)
+	if err != nil {
+		t.Fatalf("buildEditorOpenCommand() error = %v", err)
+	}
+	if !background {
+		t.Fatal("buildEditorOpenCommand() background = false, want true for VS Code")
+	}
+
+	wantArgs := []string{"code", "--profile", "work", "--reuse-window", "--goto", `/tmp/my wt/a "b".go:42:1`}
+	if !reflect.DeepEqual(cmd.Args, wantArgs) {
+		t.Fatalf("buildEditorOpenCommand() args = %v, want %v", cmd.Args, wantArgs)
+	}
+	if cmd.Dir != wtPath {
+		t.Fatalf("buildEditorOpenCommand() dir = %q, want %q", cmd.Dir, wtPath)
+	}
+}
+
+func TestBuildEditorOpenCommandCursor(t *testing.T) {
+	wtPath := "/tmp/my wt"
+	filePath := "/tmp/my wt/main.go"
+
+	cmd, background, err := buildEditorOpenCommand("cursor", wtPath, filePath, 7)
+	if err != nil {
+		t.Fatalf("buildEditorOpenCommand() error = %v", err)
+	}
+	if !background {
+		t.Fatal("buildEditorOpenCommand() background = false, want true for Cursor")
+	}
+
+	wantArgs := []string{"cursor", "--reuse-window", "--goto", "/tmp/my wt/main.go:7:1"}
+	if !reflect.DeepEqual(cmd.Args, wantArgs) {
+		t.Fatalf("buildEditorOpenCommand() args = %v, want %v", cmd.Args, wantArgs)
+	}
+	if cmd.Dir != wtPath {
+		t.Fatalf("buildEditorOpenCommand() dir = %q, want %q", cmd.Dir, wtPath)
+	}
+}
+
+func TestBuildEditorOpenCommandGeneric(t *testing.T) {
+	wtPath := "/tmp/my wt"
+	filePath := "/tmp/my wt/main.go"
+
+	cmd, background, err := buildEditorOpenCommand("vim -u NORC", wtPath, filePath, 12)
+	if err != nil {
+		t.Fatalf("buildEditorOpenCommand() error = %v", err)
+	}
+	if background {
+		t.Fatal("buildEditorOpenCommand() background = true, want false for generic editors")
+	}
+
+	wantArgs := []string{"vim", "-u", "NORC", "+12", "/tmp/my wt/main.go"}
+	if !reflect.DeepEqual(cmd.Args, wantArgs) {
+		t.Fatalf("buildEditorOpenCommand() args = %v, want %v", cmd.Args, wantArgs)
+	}
+	if cmd.Dir != wtPath {
+		t.Fatalf("buildEditorOpenCommand() dir = %q, want %q", cmd.Dir, wtPath)
+	}
+}
+
 func TestBuildTmuxAttachCommandInsideTmux(t *testing.T) {
 	t.Setenv("TMUX", "/tmp/tmux-1000/default,123,0")
 	t.Setenv("PATH", "/usr/bin")
